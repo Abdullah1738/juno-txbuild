@@ -30,6 +30,10 @@ func TestListSpendableNotesFromScan_PaginatesAndFilters(t *testing.T) {
 			http.Error(w, "bad limit", http.StatusBadRequest)
 			return
 		}
+		if q.Get("direction") != "incoming" {
+			http.Error(w, "bad direction", http.StatusBadRequest)
+			return
+		}
 		if q.Get("min_value_zat") != "10" {
 			http.Error(w, "bad min_value_zat", http.StatusBadRequest)
 			return
@@ -43,6 +47,18 @@ func TestListSpendableNotesFromScan_PaginatesAndFilters(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"notes": []map[string]any{
 					{
+						"direction":         "outgoing",
+						"txid":              "9999999999999999999999999999999999999999999999999999999999999999",
+						"action_index":      0,
+						"height":            100,
+						"position":          9,
+						"recipient_address": "jtest1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqp4f3t7",
+						"value_zat":         100,
+						"note_nullifier":    nil,
+						"created_at":        now,
+					},
+					{
+						"direction":         "incoming",
 						"txid":              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 						"action_index":      0,
 						"height":            100,
@@ -53,6 +69,7 @@ func TestListSpendableNotesFromScan_PaginatesAndFilters(t *testing.T) {
 						"created_at":        now,
 					},
 					{
+						"direction":         "incoming",
 						"txid":              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 						"action_index":      1,
 						"height":            101,
@@ -70,6 +87,7 @@ func TestListSpendableNotesFromScan_PaginatesAndFilters(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"notes": []map[string]any{
 					{
+						"direction":         "incoming",
 						"txid":              "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 						"action_index":      2,
 						"height":            102,

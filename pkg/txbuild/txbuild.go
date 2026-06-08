@@ -1159,6 +1159,7 @@ func listSpendableNotesFromScan(ctx context.Context, sc *junoscan.Client, wallet
 
 	opts := junoscan.ListWalletNotesOptions{
 		OnlyUnspent: true,
+		Direction:   "incoming",
 		Limit:       1000,
 	}
 	if minNoteZat > 0 {
@@ -1173,6 +1174,9 @@ func listSpendableNotesFromScan(ctx context.Context, sc *junoscan.Client, wallet
 			return nil, err
 		}
 		for _, n := range page.Notes {
+			if direction := strings.TrimSpace(n.Direction); direction != "" && !strings.EqualFold(direction, "incoming") {
+				continue
+			}
 			if n.PendingSpentTxID != nil && strings.TrimSpace(*n.PendingSpentTxID) != "" {
 				continue
 			}
