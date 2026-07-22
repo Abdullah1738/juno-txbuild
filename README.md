@@ -25,21 +25,27 @@ Environment variables (optional; avoid passing secrets on the command line):
 - `send`: single-output withdrawal plan
 - `send-many`: multi-output withdrawal plan (JSON outputs file)
 - `sweep`: sweep all spendable notes into 1 output
-- `consolidate`: consolidate many notes into 1 output
+- `consolidate`: consolidate 2 to 200 notes into 1 output (`--max-spends` defaults to `50`)
 - `rebalance`: multi-output rebalance plan (JSON outputs file)
 
 Run `juno-txbuild --help` (or `juno-txbuild <command> -h`) for the complete flag reference.
 
+All commands default to `--minconf 100`. The signer accepts at most 200 Orchard inputs and 200 total Orchard outputs, including implicit change. A plan may have 200 explicit outputs only when it creates no change. If a withdrawal needs more inputs, txbuild returns `too_many_inputs`; consolidate notes and retry.
+
+`--coin-type 0` infers the ZIP-32 coin type from the node (`8133` mainnet, `8134` testnet, `8135` regtest). An explicit value must match the connected network.
+
 ## Fees
 
-By default, `juno-txbuild` sets `fee_zat` to the ZIP-317 conventional fee used by `junocashd`:
+The base fee calculation is:
 
-- `fee_zat = 5000 * max(2, max(spends, outputs))`
+- `base_fee_zat = 5000 * max(2, max(spends, outputs))`
 - where `outputs` includes the change output when `change > 0`
+
+The shipped default is `--fee-multiplier 20`, matching the pinned `junocashd` 0.9.12 policy. Therefore the default fee is `base_fee_zat * 20` before `--fee-add-zat`.
 
 To pay a higher fee (e.g. during congestion, or to reduce time-to-mine), use:
 
-- `--fee-multiplier <n>` (multiplies the conventional fee)
+- `--fee-multiplier <n>` (multiplies the base fee; default `20`)
 - `--fee-add-zat <zat>` (adds an absolute zatoshi amount on top)
 
 To avoid creating very small change notes, use:
@@ -70,7 +76,15 @@ By default, `juno-txbuild` uses `junocashd` RPC to enumerate spendable Orchard n
 
 If you provide `--scan-url` (or set `JUNO_SCAN_URL`), `juno-txbuild` will source unspent notes + witness paths from `juno-scan` instead, avoiding a full chain rescan per invocation. In this mode, `--wallet-id` is used as the `wallet_id` for `juno-scan`.
 
+Before reading notes, txbuild requires scanner health status `ok` and an exact scanner/node height and hash match at the captured planning anchor. Witnesses are requested at that explicit height. Before returning a plan, txbuild re-reads every selected note, verifies the same node and scanner anchor, and verifies that the node network, next-block consensus branch, and remaining expiry window are still compatible. A reorg, scanner-tip change, selected-note spend, consensus upgrade, or near-expiry plan during planning therefore fails closed. The node may advance beyond the anchor only while that anchor remains canonical, the next-block branch is unchanged, and the plan remains acceptable to the node's expiring-soon policy.
+
 If `juno-scan` is configured with `-api-bearer-token`, pass `--scan-bearer-token` (or set `JUNO_SCAN_BEARER_TOKEN`) so `juno-txbuild` will include `Authorization: Bearer <token>` on all `juno-scan` requests.
+
+## Concurrency and note reservations
+
+The final selected-note recheck is not a reservation. `juno-txbuild` does not coordinate concurrent planners, and scanner pending-spend state is observational rather than a lock.
+
+The exchange must serialize planning per wallet and atomically reserve every returned `notes[].note_id` in its own database before signing. Reservation is all-or-nothing: if any note is already reserved, discard the entire plan and rebuild. Never sign two plans with overlapping note IDs. Keep reservations until the transaction is confirmed or is conclusively rejected or expired and scanner state has reconciled; only then release them.
 
 ## File formats
 
@@ -106,6 +120,7 @@ Error codes are designed to be machine-readable:
 
 - `invalid_request`
 - `insufficient_balance`
+- `too_many_inputs`
 - `no_liquidity_in_hot`
 - `not_found`
 

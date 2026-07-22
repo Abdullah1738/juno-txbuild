@@ -3,10 +3,71 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/Abdullah1738/juno-sdk-go/types"
 )
+
+func TestUsageDocumentsSafeDefaultsAndLimits(t *testing.T) {
+	var out, errBuf bytes.Buffer
+
+	code := RunWithIO([]string{"--help"}, &out, &errBuf)
+	if code != 0 {
+		t.Fatalf("exit code=%d stderr=%q", code, errBuf.String())
+	}
+	for _, want := range []string{
+		"--max-spends <2..200>",
+		"Defaults: --minconf 100, --fee-multiplier 20",
+		"signer limit: 200 inputs and 200 total outputs including change",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("usage missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestConsolidateRejectsMaxSpendsOutsideRangeBeforeRPC(t *testing.T) {
+	for _, value := range []string{"-1", "0", "1", "201"} {
+		t.Run(value, func(t *testing.T) {
+			var out, errBuf bytes.Buffer
+			code := RunWithIO([]string{"consolidate", "--max-spends", value, "--json"}, &out, &errBuf)
+			if code != 1 {
+				t.Fatalf("exit code=%d stderr=%q", code, errBuf.String())
+			}
+			var envelope struct {
+				Error struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(out.Bytes(), &envelope); err != nil {
+				t.Fatalf("decode error envelope: %v", err)
+			}
+			if envelope.Error.Code != string(types.ErrCodeInvalidRequest) || !strings.Contains(envelope.Error.Message, "between 2 and 200") {
+				t.Fatalf("unexpected error: %+v", envelope.Error)
+			}
+		})
+	}
+}
+
+func TestPlannerUint32FlagsRejectOverflowAndHardenedAccount(t *testing.T) {
+	maxUint32 := uint64(^uint32(0))
+	if _, _, _, err := plannerUint32Flags(maxUint32, (1<<31)-1, maxUint32); err != nil {
+		t.Fatalf("valid boundaries rejected: %v", err)
+	}
+	for name, values := range map[string][3]uint64{
+		"coin type overflow": {maxUint32 + 1, 0, 40},
+		"hardened account":   {8135, 1 << 31, 40},
+		"expiry overflow":    {8135, 0, maxUint32 + 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, _, err := plannerUint32Flags(values[0], values[1], values[2]); err == nil {
+				t.Fatal("invalid values accepted")
+			}
+		})
+	}
+}
 
 func TestWriteErr_JSON_IncludesVersion(t *testing.T) {
 	var out, errBuf bytes.Buffer

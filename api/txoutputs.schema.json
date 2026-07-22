@@ -2,6 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "TxOutputs",
   "type": "array",
+  "description": "Explicit Orchard outputs. The signer limit is 200 total outputs including implicit change, so 200 explicit outputs require zero change.",
+  "minItems": 1,
+  "maxItems": 200,
   "items": {
     "$ref": "#/$defs/TxOutput"
   },

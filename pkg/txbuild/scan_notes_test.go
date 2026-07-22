@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -163,5 +164,52 @@ func TestListSpendableNotesFromScan_CursorLoop(t *testing.T) {
 	_, err = listSpendableNotesFromScan(context.Background(), sc, "hot", 200, 1, 0)
 	if err == nil {
 		t.Fatalf("expected error")
+	}
+}
+
+func TestListSpendableNotesFromScan_RejectsMissingOrInvalidDirection(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		direction     string
+		omitDirection bool
+		wantError     string
+	}{
+		{name: "legacy response omits direction", omitDirection: true, wantError: "missing direction"},
+		{name: "malformed response has unknown direction", direction: "legacy", wantError: "invalid direction"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			note := map[string]any{
+				"txid":              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"action_index":      0,
+				"height":            100,
+				"position":          1,
+				"recipient_address": "jtest1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqp4f3t7",
+				"value_zat":         100,
+				"note_nullifier":    "1111111111111111111111111111111111111111111111111111111111111111",
+				"created_at":        time.Now().UTC(),
+			}
+			if !tt.omitDirection {
+				note["direction"] = tt.direction
+			}
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"notes": []map[string]any{note}})
+			}))
+			defer srv.Close()
+
+			sc, err := junoscan.New(srv.URL)
+			if err != nil {
+				t.Fatalf("junoscan.New: %v", err)
+			}
+			_, err = listSpendableNotesFromScan(context.Background(), sc, "hot", 200, 1, 0)
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("error=%v want substring %q", err, tt.wantError)
+			}
+		})
 	}
 }

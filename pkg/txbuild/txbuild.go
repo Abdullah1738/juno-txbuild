@@ -120,6 +120,9 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 	if cfg.WalletID == "" {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "wallet_id required"}
 	}
+	if err := validateAccount(cfg.Account); err != nil {
+		return types.TxPlan{}, err
+	}
 	switch cfg.Kind {
 	case types.TxPlanKindWithdrawal, types.TxPlanKindSweep, types.TxPlanKindRebalance:
 	default:
@@ -128,21 +131,20 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 	if len(cfg.Outputs) == 0 {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "outputs required"}
 	}
+	if len(cfg.Outputs) > MaxOrchardOutputs {
+		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: fmt.Sprintf("outputs must contain at most %d entries", MaxOrchardOutputs)}
+	}
 	if cfg.ChangeAddress == "" {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "change_address required"}
 	}
-	if cfg.MinConfirmations <= 0 {
-		cfg.MinConfirmations = 1
-	}
+	cfg.MinConfirmations = normalizedMinConfirmations(cfg.MinConfirmations)
 	if cfg.ExpiryOffset == 0 {
 		cfg.ExpiryOffset = 40
 	}
 	if cfg.ExpiryOffset < 4 {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "expiry_offset must be >= 4"}
 	}
-	if cfg.FeeMultiplier == 0 {
-		cfg.FeeMultiplier = 1
-	}
+	cfg.FeeMultiplier = normalizedFeeMultiplier(cfg.FeeMultiplier)
 
 	var totalOut uint64
 	for i := range cfg.Outputs {
@@ -173,18 +175,9 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 		return types.TxPlan{}, err
 	}
 
-	coinType := cfg.CoinType
-	if coinType == 0 {
-		switch strings.ToLower(strings.TrimSpace(chainInfo.Chain)) {
-		case "main":
-			coinType = 8133
-		case "test":
-			coinType = 8134
-		case "regtest":
-			coinType = 8135
-		default:
-			return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "unknown chain"}
-		}
+	coinType, err := resolveCoinType(chainInfo.Chain, cfg.CoinType)
+	if err != nil {
+		return types.TxPlan{}, err
 	}
 	if chainInfo.Height < 0 {
 		return types.TxPlan{}, errors.New("txbuild: invalid chain height")
@@ -196,6 +189,10 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 
 	if cfg.ScanURL != "" {
 		return planWithScan(ctx, rpc, chainInfo, coinType, cfg, totalOut)
+	}
+	nodeSnapshot, err := captureNodeAnchor(ctx, rpc, chainInfo.Height)
+	if err != nil {
+		return types.TxPlan{}, err
 	}
 
 	orchard, err := chain.BuildOrchardIndex(ctx, rpc, int64(anchorHeight))
@@ -220,9 +217,9 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 		AddZat:     cfg.FeeAddZat,
 	}
 
-	selected, feeZat, err := logic.SelectNotesWithFeePolicy(notes, totalOut, len(cfg.Outputs), feePolicy)
+	selected, feeZat, err := selectNotesForPlan(notes, totalOut, len(cfg.Outputs), feePolicy)
 	if err != nil {
-		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "insufficient funds"}
+		return types.TxPlan{}, err
 	}
 
 	var totalIn uint64
@@ -234,6 +231,10 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 		}
 	}
 	feeZat, _, err = logic.SuppressDustChange(totalIn, totalOut, feeZat, cfg.MinChangeZat)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
+	hasChange, err := orchardChangeRequired(totalIn, totalOut, feeZat)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
@@ -294,6 +295,16 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 		FeeZat:        strconv.FormatUint(feeZat, 10),
 		Notes:         planNotes,
 	}
+	plan, err = signerCompatiblePlan(plan, hasChange)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
+	if err := verifyNodeAnchor(ctx, rpc, nodeSnapshot); err != nil {
+		return types.TxPlan{}, err
+	}
+	if err := verifyChainContext(ctx, rpc, chainInfo, nodeSnapshot, expiryHeight); err != nil {
+		return types.TxPlan{}, err
+	}
 	return plan, nil
 }
 
@@ -340,24 +351,23 @@ func PlanSweep(ctx context.Context, cfg SweepConfig) (types.TxPlan, error) {
 	if cfg.WalletID == "" {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "wallet_id required"}
 	}
+	if err := validateAccount(cfg.Account); err != nil {
+		return types.TxPlan{}, err
+	}
 	if cfg.ToAddress == "" {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "to required"}
 	}
 	if cfg.ChangeAddress == "" {
 		cfg.ChangeAddress = cfg.ToAddress
 	}
-	if cfg.MinConfirmations <= 0 {
-		cfg.MinConfirmations = 1
-	}
+	cfg.MinConfirmations = normalizedMinConfirmations(cfg.MinConfirmations)
 	if cfg.ExpiryOffset == 0 {
 		cfg.ExpiryOffset = 40
 	}
 	if cfg.ExpiryOffset < 4 {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "expiry_offset must be >= 4"}
 	}
-	if cfg.FeeMultiplier == 0 {
-		cfg.FeeMultiplier = 1
-	}
+	cfg.FeeMultiplier = normalizedFeeMultiplier(cfg.FeeMultiplier)
 
 	rpc := junocashd.New(cfg.RPCURL, cfg.RPCUser, cfg.RPCPass)
 
@@ -366,18 +376,9 @@ func PlanSweep(ctx context.Context, cfg SweepConfig) (types.TxPlan, error) {
 		return types.TxPlan{}, err
 	}
 
-	coinType := cfg.CoinType
-	if coinType == 0 {
-		switch strings.ToLower(strings.TrimSpace(chainInfo.Chain)) {
-		case "main":
-			coinType = 8133
-		case "test":
-			coinType = 8134
-		case "regtest":
-			coinType = 8135
-		default:
-			return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "unknown chain"}
-		}
+	coinType, err := resolveCoinType(chainInfo.Chain, cfg.CoinType)
+	if err != nil {
+		return types.TxPlan{}, err
 	}
 	if chainInfo.Height < 0 {
 		return types.TxPlan{}, errors.New("txbuild: invalid chain height")
@@ -389,6 +390,10 @@ func PlanSweep(ctx context.Context, cfg SweepConfig) (types.TxPlan, error) {
 
 	if cfg.ScanURL != "" {
 		return planSweepWithScan(ctx, rpc, chainInfo, coinType, cfg)
+	}
+	nodeSnapshot, err := captureNodeAnchor(ctx, rpc, chainInfo.Height)
+	if err != nil {
+		return types.TxPlan{}, err
 	}
 
 	orchard, err := chain.BuildOrchardIndex(ctx, rpc, int64(anchorHeight))
@@ -406,6 +411,9 @@ func PlanSweep(ctx context.Context, cfg SweepConfig) (types.TxPlan, error) {
 	notes = logic.FilterNotesMinValue(notes, cfg.MinNoteZat)
 	if len(notes) == 0 {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "no spendable notes"}
+	}
+	if err := ensureOrchardSpendLimit(len(notes)); err != nil {
+		return types.TxPlan{}, err
 	}
 
 	var totalIn uint64
@@ -488,6 +496,16 @@ func PlanSweep(ctx context.Context, cfg SweepConfig) (types.TxPlan, error) {
 		FeeZat:        strconv.FormatUint(feeZat, 10),
 		Notes:         planNotes,
 	}
+	plan, err = signerCompatiblePlan(plan, false)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
+	if err := verifyNodeAnchor(ctx, rpc, nodeSnapshot); err != nil {
+		return types.TxPlan{}, err
+	}
+	if err := verifyChainContext(ctx, rpc, chainInfo, nodeSnapshot, expiryHeight); err != nil {
+		return types.TxPlan{}, err
+	}
 	return plan, nil
 }
 
@@ -536,27 +554,29 @@ func PlanConsolidate(ctx context.Context, cfg ConsolidateConfig) (types.TxPlan, 
 	if cfg.WalletID == "" {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "wallet_id required"}
 	}
+	if err := validateAccount(cfg.Account); err != nil {
+		return types.TxPlan{}, err
+	}
 	if cfg.ToAddress == "" {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "to required"}
 	}
 	if cfg.ChangeAddress == "" {
 		cfg.ChangeAddress = cfg.ToAddress
 	}
-	if cfg.MaxSpends <= 0 {
+	if cfg.MaxSpends == 0 {
 		cfg.MaxSpends = 50
 	}
-	if cfg.MinConfirmations <= 0 {
-		cfg.MinConfirmations = 1
+	if cfg.MaxSpends < 2 || cfg.MaxSpends > MaxOrchardSpendNotes {
+		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: fmt.Sprintf("max_spends must be between 2 and %d", MaxOrchardSpendNotes)}
 	}
+	cfg.MinConfirmations = normalizedMinConfirmations(cfg.MinConfirmations)
 	if cfg.ExpiryOffset == 0 {
 		cfg.ExpiryOffset = 40
 	}
 	if cfg.ExpiryOffset < 4 {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "expiry_offset must be >= 4"}
 	}
-	if cfg.FeeMultiplier == 0 {
-		cfg.FeeMultiplier = 1
-	}
+	cfg.FeeMultiplier = normalizedFeeMultiplier(cfg.FeeMultiplier)
 
 	rpc := junocashd.New(cfg.RPCURL, cfg.RPCUser, cfg.RPCPass)
 
@@ -565,18 +585,9 @@ func PlanConsolidate(ctx context.Context, cfg ConsolidateConfig) (types.TxPlan, 
 		return types.TxPlan{}, err
 	}
 
-	coinType := cfg.CoinType
-	if coinType == 0 {
-		switch strings.ToLower(strings.TrimSpace(chainInfo.Chain)) {
-		case "main":
-			coinType = 8133
-		case "test":
-			coinType = 8134
-		case "regtest":
-			coinType = 8135
-		default:
-			return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "unknown chain"}
-		}
+	coinType, err := resolveCoinType(chainInfo.Chain, cfg.CoinType)
+	if err != nil {
+		return types.TxPlan{}, err
 	}
 	if chainInfo.Height < 0 {
 		return types.TxPlan{}, errors.New("txbuild: invalid chain height")
@@ -588,6 +599,10 @@ func PlanConsolidate(ctx context.Context, cfg ConsolidateConfig) (types.TxPlan, 
 
 	if cfg.ScanURL != "" {
 		return planConsolidateWithScan(ctx, rpc, chainInfo, coinType, cfg)
+	}
+	nodeSnapshot, err := captureNodeAnchor(ctx, rpc, chainInfo.Height)
+	if err != nil {
+		return types.TxPlan{}, err
 	}
 
 	orchard, err := chain.BuildOrchardIndex(ctx, rpc, int64(anchorHeight))
@@ -687,6 +702,16 @@ func PlanConsolidate(ctx context.Context, cfg ConsolidateConfig) (types.TxPlan, 
 		FeeZat:        strconv.FormatUint(feeZat, 10),
 		Notes:         planNotes,
 	}
+	plan, err = signerCompatiblePlan(plan, false)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
+	if err := verifyNodeAnchor(ctx, rpc, nodeSnapshot); err != nil {
+		return types.TxPlan{}, err
+	}
+	if err := verifyChainContext(ctx, rpc, chainInfo, nodeSnapshot, expiryHeight); err != nil {
+		return types.TxPlan{}, err
+	}
 	return plan, nil
 }
 
@@ -703,8 +728,12 @@ func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.Ch
 	if err != nil {
 		return types.TxPlan{}, err
 	}
+	snapshot, err := captureScannerAnchor(ctx, rpc, sc, chainInfo.Height)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
 
-	notes, err := listSpendableNotesFromScan(ctx, sc, cfg.WalletID, chainInfo.Height, cfg.MinConfirmations, cfg.MinNoteZat)
+	notes, err := listSpendableNotesFromScan(ctx, sc, cfg.WalletID, snapshot.height, cfg.MinConfirmations, cfg.MinNoteZat)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
@@ -718,9 +747,9 @@ func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.Ch
 		Multiplier: cfg.FeeMultiplier,
 		AddZat:     cfg.FeeAddZat,
 	}
-	selected, feeZat, err := logic.SelectNotesWithFeePolicy(unspent, totalOut, len(cfg.Outputs), feePolicy)
+	selected, feeZat, err := selectNotesForPlan(unspent, totalOut, len(cfg.Outputs), feePolicy)
 	if err != nil {
-		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "insufficient funds"}
+		return types.TxPlan{}, err
 	}
 
 	var totalIn uint64
@@ -732,6 +761,10 @@ func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.Ch
 		}
 	}
 	feeZat, _, err = logic.SuppressDustChange(totalIn, totalOut, feeZat, cfg.MinChangeZat)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
+	hasChange, err := orchardChangeRequired(totalIn, totalOut, feeZat)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
@@ -769,7 +802,7 @@ func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.Ch
 		})
 	}
 
-	wit, err := sc.OrchardWitness(ctx, nil, positions)
+	wit, err := orchardWitnessAtAnchor(ctx, sc, snapshot.height, positions)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
@@ -792,7 +825,7 @@ func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.Ch
 		planNotes[i].Path = p
 	}
 
-	expiryHeight, err := logic.ExpiryHeightFromTip(uint32(chainInfo.Height), cfg.ExpiryOffset)
+	expiryHeight, err := logic.ExpiryHeightFromTip(uint32(snapshot.height), cfg.ExpiryOffset)
 	if err != nil {
 		return types.TxPlan{}, errors.New("txbuild: expiry height overflow")
 	}
@@ -813,6 +846,19 @@ func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.Ch
 		FeeZat:        strconv.FormatUint(feeZat, 10),
 		Notes:         planNotes,
 	}
+	plan, err = signerCompatiblePlan(plan, hasChange)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
+	if err := verifySelectedNotesStillSpendable(ctx, sc, cfg.WalletID, snapshot.height, cfg.MinConfirmations, cfg.MinNoteZat, selected); err != nil {
+		return types.TxPlan{}, err
+	}
+	if err := verifyScannerAnchor(ctx, rpc, sc, snapshot); err != nil {
+		return types.TxPlan{}, err
+	}
+	if err := verifyChainContext(ctx, rpc, chainInfo, snapshot, expiryHeight); err != nil {
+		return types.TxPlan{}, err
+	}
 	return plan, nil
 }
 
@@ -821,8 +867,12 @@ func planConsolidateWithScan(ctx context.Context, rpc *junocashd.Client, chainIn
 	if err != nil {
 		return types.TxPlan{}, err
 	}
+	snapshot, err := captureScannerAnchor(ctx, rpc, sc, chainInfo.Height)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
 
-	notes, err := listSpendableNotesFromScan(ctx, sc, cfg.WalletID, chainInfo.Height, cfg.MinConfirmations, cfg.MinNoteZat)
+	notes, err := listSpendableNotesFromScan(ctx, sc, cfg.WalletID, snapshot.height, cfg.MinConfirmations, cfg.MinNoteZat)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
@@ -887,7 +937,7 @@ func planConsolidateWithScan(ctx context.Context, rpc *junocashd.Client, chainIn
 		})
 	}
 
-	wit, err := sc.OrchardWitness(ctx, nil, positions)
+	wit, err := orchardWitnessAtAnchor(ctx, sc, snapshot.height, positions)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
@@ -910,7 +960,7 @@ func planConsolidateWithScan(ctx context.Context, rpc *junocashd.Client, chainIn
 		planNotes[i].Path = p
 	}
 
-	expiryHeight, err := logic.ExpiryHeightFromTip(uint32(chainInfo.Height), cfg.ExpiryOffset)
+	expiryHeight, err := logic.ExpiryHeightFromTip(uint32(snapshot.height), cfg.ExpiryOffset)
 	if err != nil {
 		return types.TxPlan{}, errors.New("txbuild: expiry height overflow")
 	}
@@ -933,6 +983,19 @@ func planConsolidateWithScan(ctx context.Context, rpc *junocashd.Client, chainIn
 		FeeZat:        strconv.FormatUint(feeZat, 10),
 		Notes:         planNotes,
 	}
+	plan, err = signerCompatiblePlan(plan, false)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
+	if err := verifySelectedNotesStillSpendable(ctx, sc, cfg.WalletID, snapshot.height, cfg.MinConfirmations, cfg.MinNoteZat, selected); err != nil {
+		return types.TxPlan{}, err
+	}
+	if err := verifyScannerAnchor(ctx, rpc, sc, snapshot); err != nil {
+		return types.TxPlan{}, err
+	}
+	if err := verifyChainContext(ctx, rpc, chainInfo, snapshot, expiryHeight); err != nil {
+		return types.TxPlan{}, err
+	}
 	return plan, nil
 }
 
@@ -941,13 +1004,20 @@ func planSweepWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo cha
 	if err != nil {
 		return types.TxPlan{}, err
 	}
+	snapshot, err := captureScannerAnchor(ctx, rpc, sc, chainInfo.Height)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
 
-	notes, err := listSpendableNotesFromScan(ctx, sc, cfg.WalletID, chainInfo.Height, cfg.MinConfirmations, cfg.MinNoteZat)
+	notes, err := listSpendableNotesFromScan(ctx, sc, cfg.WalletID, snapshot.height, cfg.MinConfirmations, cfg.MinNoteZat)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
 	if len(notes) == 0 {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "no spendable notes"}
+	}
+	if err := ensureOrchardSpendLimit(len(notes)); err != nil {
+		return types.TxPlan{}, err
 	}
 
 	var totalIn uint64
@@ -992,7 +1062,7 @@ func planSweepWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo cha
 		})
 	}
 
-	wit, err := sc.OrchardWitness(ctx, nil, positions)
+	wit, err := orchardWitnessAtAnchor(ctx, sc, snapshot.height, positions)
 	if err != nil {
 		return types.TxPlan{}, err
 	}
@@ -1014,7 +1084,7 @@ func planSweepWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo cha
 		planNotes[i].Path = p
 	}
 
-	expiryHeight, err := logic.ExpiryHeightFromTip(uint32(chainInfo.Height), cfg.ExpiryOffset)
+	expiryHeight, err := logic.ExpiryHeightFromTip(uint32(snapshot.height), cfg.ExpiryOffset)
 	if err != nil {
 		return types.TxPlan{}, errors.New("txbuild: expiry height overflow")
 	}
@@ -1037,18 +1107,52 @@ func planSweepWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo cha
 		FeeZat:        strconv.FormatUint(feeZat, 10),
 		Notes:         planNotes,
 	}
+	plan, err = signerCompatiblePlan(plan, false)
+	if err != nil {
+		return types.TxPlan{}, err
+	}
+	if err := verifySelectedNotesStillSpendable(ctx, sc, cfg.WalletID, snapshot.height, cfg.MinConfirmations, cfg.MinNoteZat, notesToUnspent(notes)); err != nil {
+		return types.TxPlan{}, err
+	}
+	if err := verifyScannerAnchor(ctx, rpc, sc, snapshot); err != nil {
+		return types.TxPlan{}, err
+	}
+	if err := verifyChainContext(ctx, rpc, chainInfo, snapshot, expiryHeight); err != nil {
+		return types.TxPlan{}, err
+	}
 	return plan, nil
 }
 
+func verifyChainContext(ctx context.Context, rpc chain.RPC, expected chain.ChainInfo, snapshot scannerAnchorSnapshot, expiryHeight uint32) error {
+	current, err := chain.GetChainInfo(ctx, rpc)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(strings.TrimSpace(current.Chain), strings.TrimSpace(expected.Chain)) {
+		return errors.New("txbuild: node network changed during planning")
+	}
+	if current.Height < snapshot.height {
+		return errors.New("txbuild: node tip moved behind the planning anchor")
+	}
+	if current.BranchID != expected.BranchID {
+		return errors.New("txbuild: next-block consensus branch changed during planning; retry")
+	}
+	nextBlockHeight := uint64(current.Height) + 1
+	if nextBlockHeight+txExpiringSoonThreshold > uint64(expiryHeight) {
+		return errors.New("txbuild: transaction expiry became too close during planning; retry")
+	}
+	return nil
+}
+
 func selectNotesForConsolidation(notes []logic.UnspentNote, maxSpends int, feePolicy logic.FeePolicy) ([]logic.UnspentNote, uint64, error) {
-	if maxSpends <= 0 {
+	if maxSpends == 0 {
 		maxSpends = 50
+	}
+	if maxSpends < 2 || maxSpends > MaxOrchardSpendNotes {
+		return nil, 0, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: fmt.Sprintf("max_spends must be between 2 and %d", MaxOrchardSpendNotes)}
 	}
 	if maxSpends > len(notes) {
 		maxSpends = len(notes)
-	}
-	if maxSpends < 2 {
-		return nil, 0, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "max_spends must be >= 2"}
 	}
 
 	notesAsc := append([]logic.UnspentNote(nil), notes...)
@@ -1167,6 +1271,7 @@ func listSpendableNotesFromScan(ctx context.Context, sc *junoscan.Client, wallet
 	}
 
 	seenCursor := map[string]struct{}{}
+	seenNotes := map[string]struct{}{}
 	out := make([]spendableNote, 0, 1024)
 	for {
 		page, err := sc.ListWalletNotesPage(ctx, walletID, opts)
@@ -1174,8 +1279,15 @@ func listSpendableNotesFromScan(ctx context.Context, sc *junoscan.Client, wallet
 			return nil, err
 		}
 		for _, n := range page.Notes {
-			if direction := strings.TrimSpace(n.Direction); direction != "" && !strings.EqualFold(direction, "incoming") {
+			direction := strings.ToLower(strings.TrimSpace(n.Direction))
+			switch direction {
+			case "incoming":
+			case "outgoing":
 				continue
+			case "":
+				return nil, errors.New("txbuild: scan note missing direction")
+			default:
+				return nil, fmt.Errorf("txbuild: scan note has invalid direction %q", direction)
 			}
 			if n.PendingSpentTxID != nil && strings.TrimSpace(*n.PendingSpentTxID) != "" {
 				continue
@@ -1208,6 +1320,11 @@ func listSpendableNotesFromScan(ctx context.Context, sc *junoscan.Client, wallet
 			if *n.Position > int64(^uint32(0)) {
 				return nil, errors.New("txbuild: note position too large")
 			}
+			key := fmt.Sprintf("%s:%d", strings.ToLower(strings.TrimSpace(n.TxID)), n.ActionIndex)
+			if _, exists := seenNotes[key]; exists {
+				return nil, errors.New("txbuild: scan returned a duplicate note")
+			}
+			seenNotes[key] = struct{}{}
 			out = append(out, spendableNote{
 				TxID:        strings.ToLower(strings.TrimSpace(n.TxID)),
 				ActionIndex: uint32(n.ActionIndex),
@@ -1228,6 +1345,24 @@ func listSpendableNotesFromScan(ctx context.Context, sc *junoscan.Client, wallet
 		opts.Cursor = next
 	}
 	return out, nil
+}
+
+func verifySelectedNotesStillSpendable(ctx context.Context, sc *junoscan.Client, walletID string, tipHeight, minConf int64, minNoteZat uint64, selected []logic.UnspentNote) error {
+	current, err := listSpendableNotesFromScan(ctx, sc, walletID, tipHeight, minConf, minNoteZat)
+	if err != nil {
+		return err
+	}
+	available := make(map[string]uint64, len(current))
+	for _, note := range current {
+		available[fmt.Sprintf("%s:%d", note.TxID, note.ActionIndex)] = note.ValueZat
+	}
+	for _, note := range selected {
+		key := fmt.Sprintf("%s:%d", strings.ToLower(strings.TrimSpace(note.TxID)), note.ActionIndex)
+		if value, ok := available[key]; !ok || value != note.ValueZat {
+			return errors.New("txbuild: selected note spendability changed during planning; retry")
+		}
+	}
+	return nil
 }
 
 func notesToUnspent(ns []spendableNote) []logic.UnspentNote {

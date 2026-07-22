@@ -18,6 +18,7 @@ import (
 
 type scanFixture struct {
 	chainHeight int64
+	chainHash   string
 	cmxHex      []string
 	byOutpoint  map[string]struct {
 		height   int64
@@ -43,6 +44,23 @@ func startScanStub(t *testing.T, ctx context.Context, rpc *junocashd.Client, bea
 	bearerToken = strings.TrimSpace(bearerToken)
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/health", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if bearerToken != "" && !validBearerToken(r, bearerToken) {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":         "ok",
+			"scanned_height": fx.chainHeight,
+			"scanned_hash":   fx.chainHash,
+		})
+	})
 	mux.HandleFunc("/v1/wallets/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -74,6 +92,7 @@ func startScanStub(t *testing.T, ctx context.Context, rpc *junocashd.Client, bea
 		}
 
 		type note struct {
+			Direction     string `json:"direction"`
 			TxID          string `json:"txid"`
 			ActionIndex   uint32 `json:"action_index"`
 			Height        int64  `json:"height"`
@@ -101,6 +120,7 @@ func startScanStub(t *testing.T, ctx context.Context, rpc *junocashd.Client, bea
 				continue
 			}
 			out = append(out, note{
+				Direction:     "incoming",
 				TxID:          txid,
 				ActionIndex:   n.OutIndex,
 				Height:        meta.height,
@@ -128,7 +148,8 @@ func startScanStub(t *testing.T, ctx context.Context, rpc *junocashd.Client, bea
 		}
 
 		var req struct {
-			Positions []uint32 `json:"positions"`
+			AnchorHeight *int64   `json:"anchor_height"`
+			Positions    []uint32 `json:"positions"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid json", http.StatusBadRequest)
@@ -136,6 +157,10 @@ func startScanStub(t *testing.T, ctx context.Context, rpc *junocashd.Client, bea
 		}
 		if len(req.Positions) == 0 {
 			http.Error(w, "positions required", http.StatusBadRequest)
+			return
+		}
+		if req.AnchorHeight == nil || *req.AnchorHeight != fx.chainHeight {
+			http.Error(w, "explicit current anchor_height required", http.StatusBadRequest)
 			return
 		}
 
@@ -190,6 +215,10 @@ func buildScanFixture(ctx context.Context, rpc *junocashd.Client) (scanFixture, 
 	if err != nil {
 		return scanFixture{}, err
 	}
+	chainHash, err := rpc.GetBlockHash(ctx, chainHeight)
+	if err != nil {
+		return scanFixture{}, err
+	}
 
 	type blockV2 struct {
 		Tx []struct {
@@ -204,6 +233,7 @@ func buildScanFixture(ctx context.Context, rpc *junocashd.Client) (scanFixture, 
 
 	fx := scanFixture{
 		chainHeight: chainHeight,
+		chainHash:   strings.TrimSpace(chainHash),
 		cmxHex:      nil,
 		byOutpoint:  make(map[string]struct{ height, position int64 }),
 	}

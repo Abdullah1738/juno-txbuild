@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+var ErrInsufficientFunds = errors.New("insufficient funds")
+
 type UnspentNote struct {
 	TxID        string
 	ActionIndex uint32
@@ -95,7 +97,7 @@ func SelectNotes(notes []UnspentNote, amountZat uint64, outputCount int) ([]Unsp
 
 func SelectNotesWithFeePolicy(notes []UnspentNote, amountZat uint64, outputCount int, feePolicy FeePolicy) ([]UnspentNote, uint64, error) {
 	if len(notes) == 0 {
-		return nil, 0, errors.New("insufficient funds")
+		return nil, 0, ErrInsufficientFunds
 	}
 
 	sortByAsc := func(ns []UnspentNote) {
@@ -244,7 +246,7 @@ func SelectNotesWithFeePolicy(notes []UnspentNote, amountZat uint64, outputCount
 			return selected, feeWithChange, nil
 		}
 	}
-	return nil, 0, errors.New("insufficient funds")
+	return nil, 0, ErrInsufficientFunds
 }
 
 func ParseUint64Decimal(s string) (uint64, error) {

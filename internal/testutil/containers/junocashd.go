@@ -40,8 +40,8 @@ func StartJunocashd(ctx context.Context) (*Junocashd, error) {
 	req := testcontainers.ContainerRequest{
 		ImagePlatform: "linux/amd64",
 		FromDockerfile: testcontainers.FromDockerfile{
-			Context:    repoRoot(),
-			Dockerfile: "docker/junocashd/Dockerfile",
+			Context:    junocashdBuildContext(),
+			Dockerfile: "Dockerfile",
 			BuildArgs: map[string]*string{
 				"JUNOCASH_VERSION": &version,
 			},
@@ -154,12 +154,12 @@ func (j *Junocashd) ExecCLI(ctx context.Context, args ...string) ([]byte, error)
 	return stdout.Bytes(), nil
 }
 
-func repoRoot() string {
+func junocashdBuildContext() string {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
-		return "."
+		return filepath.Join("docker", "junocashd")
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "..", "docker", "junocashd"))
 }
 
 func waitForRPCReady(ctx context.Context, jd *Junocashd) error {

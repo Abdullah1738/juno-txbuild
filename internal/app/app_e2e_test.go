@@ -44,6 +44,36 @@ func TestE2E_CLI_SendBuildsTxPlan(t *testing.T) {
 	)
 
 	out, err := cmd.Output()
+	if err == nil {
+		t.Fatal("default 100-confirmation policy accepted a two-confirmation note")
+	}
+	var immature struct {
+		Status string `json:"status"`
+		Error  struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if decodeErr := json.Unmarshal(out, &immature); decodeErr != nil || immature.Status != "err" || immature.Error.Code != string(types.ErrCodeInsufficientBalance) {
+		t.Fatalf("unexpected immature default response: %s (decode=%v)", out, decodeErr)
+	}
+	if _, err := jd.ExecCLI(ctx, "generate", "98"); err != nil {
+		t.Fatalf("mature default-confirmation note: %v", err)
+	}
+	cmd = exec.CommandContext(
+		ctx,
+		bin,
+		"send",
+		"--rpc-url", jd.RPCURL,
+		"--rpc-user", jd.RPCUser,
+		"--rpc-pass", jd.RPCPassword,
+		"--wallet-id", "test-wallet",
+		"--account", "0",
+		"--to", toAddr,
+		"--amount-zat", "1000000",
+		"--change-address", changeAddr,
+		"--json",
+	)
+	out, err = cmd.Output()
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
@@ -94,6 +124,7 @@ func TestE2E_CLI_SendBuildsTxPlan(t *testing.T) {
 		"--to", changeAddr,
 		"--amount-zat", strconv.FormatUint(maxNote, 10),
 		"--change-address", changeAddr,
+		"--minconf", "1",
 		"--json",
 	)
 
@@ -128,6 +159,7 @@ func TestE2E_CLI_SendBuildsTxPlan(t *testing.T) {
 		"--amount-zat", strconv.FormatUint(maxNote, 10),
 		"--change-address", changeAddr,
 		"--min-note-zat", strconv.FormatUint(minNote+1, 10),
+		"--minconf", "1",
 		"--json",
 	)
 
@@ -180,6 +212,7 @@ func TestE2E_CLI_SendBuildsTxPlan_WithScanURL(t *testing.T) {
 		"--to", toAddr,
 		"--amount-zat", "1000000",
 		"--change-address", changeAddr,
+		"--minconf", "1",
 		"--json",
 	)
 
@@ -234,6 +267,7 @@ func TestE2E_CLI_SendBuildsTxPlan_WithScanURL_WithBearerToken(t *testing.T) {
 		"--to", toAddr,
 		"--amount-zat", "1000000",
 		"--change-address", changeAddr,
+		"--minconf", "1",
 		"--json",
 	)
 
@@ -282,6 +316,7 @@ func TestE2E_CLI_SweepBuildsTxPlan(t *testing.T) {
 		"--account", "0",
 		"--to", addr,
 		"--change-address", addr,
+		"--minconf", "1",
 		"--json",
 	)
 
@@ -348,6 +383,7 @@ func TestE2E_CLI_SendManyBuildsTxPlan(t *testing.T) {
 		"--account", "0",
 		"--outputs-file", outsPath,
 		"--change-address", changeAddr,
+		"--minconf", "1",
 		"--json",
 	)
 
@@ -404,6 +440,7 @@ func TestE2E_CLI_ConsolidateBuildsTxPlan(t *testing.T) {
 		"--to", addr,
 		"--change-address", addr,
 		"--max-spends", "50",
+		"--minconf", "1",
 		"--json",
 	)
 

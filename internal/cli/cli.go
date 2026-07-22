@@ -58,8 +58,10 @@ func writeUsage(w io.Writer) {
 	fmt.Fprintln(w, "  juno-txbuild send --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> --amount-zat <zat> --change-address <j*1..> [--memo-hex <hex>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--min-note-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
 	fmt.Fprintln(w, "  juno-txbuild send-many --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j*1..> [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--min-note-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
 	fmt.Fprintln(w, "  juno-txbuild sweep --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> [--change-address <j*1..>] [--memo-hex <hex>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-note-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
-	fmt.Fprintln(w, "  juno-txbuild consolidate --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> [--change-address <j*1..>] [--memo-hex <hex>] [--max-spends <n>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-note-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild consolidate --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> [--change-address <j*1..>] [--memo-hex <hex>] [--max-spends <2..200>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-note-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
 	fmt.Fprintln(w, "  juno-txbuild rebalance --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j*1..> [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--min-note-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "")
+	fmt.Fprintf(w, "Defaults: --minconf %d, --fee-multiplier %d; signer limit: %d inputs and %d total outputs including change.\n", txbuild.DefaultMinConfirmations, txbuild.DefaultFeeMultiplier, txbuild.MaxOrchardSpendNotes, txbuild.MaxOrchardOutputs)
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Env:")
 	fmt.Fprintln(w, "  JUNO_RPC_URL, JUNO_RPC_USER, JUNO_RPC_PASS, JUNO_SCAN_URL, JUNO_SCAN_BEARER_TOKEN")
@@ -76,14 +78,14 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 	var scanBearerToken string
 
 	var walletID string
-	var coinType uint
-	var account uint
+	var coinType uint64
+	var account uint64
 	var to string
 	var amountZat string
 	var memoHex string
 	var changeAddr string
 	var minconf int64
-	var expiryOffset uint
+	var expiryOffset uint64
 	var feeMultiplier uint64
 	var feeAddZat uint64
 	var minChangeZat uint64
@@ -99,18 +101,18 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&scanBearerToken, "scan-bearer-token", "", "optional bearer token for juno-scan HTTP API (Authorization: Bearer ...)")
 
 	fs.StringVar(&walletID, "wallet-id", "", "wallet id")
-	fs.UintVar(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
-	fs.UintVar(&account, "account", 0, "unified account id")
+	fs.Uint64Var(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
+	fs.Uint64Var(&account, "account", 0, "unified account id")
 	fs.StringVar(&to, "to", "", "destination unified address (j*1...)")
 	fs.StringVar(&amountZat, "amount-zat", "", "amount to send in zatoshis")
 	fs.StringVar(&memoHex, "memo-hex", "", "optional memo bytes (hex, <=512 bytes)")
 	fs.StringVar(&changeAddr, "change-address", "", "change unified address (j*1...)")
-	fs.Uint64Var(&feeMultiplier, "fee-multiplier", 1, "multiplies the ZIP-317 conventional fee (>=1)")
+	fs.Uint64Var(&feeMultiplier, "fee-multiplier", txbuild.DefaultFeeMultiplier, "multiplies the ZIP-317 base fee (>=1; default 20)")
 	fs.Uint64Var(&feeAddZat, "fee-add-zat", 0, "adds zatoshis on top of the conventional fee")
 	fs.Uint64Var(&minChangeZat, "min-change-zat", 0, "if change is in (0, min-change-zat), add it to fee and omit change output")
 	fs.Uint64Var(&minNoteZat, "min-note-zat", 0, "skip spendable notes with value < min-note-zat")
-	fs.Int64Var(&minconf, "minconf", 1, "minimum confirmations for spendable notes")
-	fs.UintVar(&expiryOffset, "expiry-offset", 40, "expiry height offset from next block height (chain tip + 1, min: 4)")
+	fs.Int64Var(&minconf, "minconf", txbuild.DefaultMinConfirmations, "minimum confirmations for spendable notes (default 100)")
+	fs.Uint64Var(&expiryOffset, "expiry-offset", 40, "expiry height offset from next block height (chain tip + 1, min: 4)")
 
 	fs.StringVar(&outPath, "out", "", "optional path to write TxPlan JSON")
 	fs.BoolVar(&jsonOut, "json", false, "JSON output")
@@ -118,6 +120,10 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 2
+	}
+	coinTypeValue, accountValue, expiryOffsetValue, flagErr := plannerUint32Flags(coinType, account, expiryOffset)
+	if flagErr != nil {
+		return writeErr(stdout, stderr, jsonOut, types.ErrCodeInvalidRequest, flagErr.Error())
 	}
 
 	rpcURL, rpcUser, rpcPass, err := rpcConfigFromFlags(rpcURL, rpcUser, rpcPass)
@@ -145,8 +151,8 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 		ScanBearerToken: scanBearerToken,
 
 		WalletID: walletID,
-		CoinType: uint32(coinType),
-		Account:  uint32(account),
+		CoinType: coinTypeValue,
+		Account:  accountValue,
 
 		ToAddress:     to,
 		AmountZat:     amountZat,
@@ -154,7 +160,7 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 		ChangeAddress: changeAddr,
 
 		MinConfirmations: minconf,
-		ExpiryOffset:     uint32(expiryOffset),
+		ExpiryOffset:     expiryOffsetValue,
 		MinNoteZat:       minNoteZat,
 
 		FeeMultiplier: feeMultiplier,
@@ -188,13 +194,13 @@ func runSweep(args []string, stdout, stderr io.Writer) int {
 	var scanBearerToken string
 
 	var walletID string
-	var coinType uint
-	var account uint
+	var coinType uint64
+	var account uint64
 	var to string
 	var memoHex string
 	var changeAddr string
 	var minconf int64
-	var expiryOffset uint
+	var expiryOffset uint64
 	var feeMultiplier uint64
 	var feeAddZat uint64
 	var minNoteZat uint64
@@ -209,16 +215,16 @@ func runSweep(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&scanBearerToken, "scan-bearer-token", "", "optional bearer token for juno-scan HTTP API (Authorization: Bearer ...)")
 
 	fs.StringVar(&walletID, "wallet-id", "", "wallet id")
-	fs.UintVar(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
-	fs.UintVar(&account, "account", 0, "unified account id")
+	fs.Uint64Var(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
+	fs.Uint64Var(&account, "account", 0, "unified account id")
 	fs.StringVar(&to, "to", "", "destination unified address (j*1...)")
 	fs.StringVar(&memoHex, "memo-hex", "", "optional memo bytes (hex, <=512 bytes)")
 	fs.StringVar(&changeAddr, "change-address", "", "change unified address (j*1...) (defaults to --to)")
-	fs.Uint64Var(&feeMultiplier, "fee-multiplier", 1, "multiplies the ZIP-317 conventional fee (>=1)")
+	fs.Uint64Var(&feeMultiplier, "fee-multiplier", txbuild.DefaultFeeMultiplier, "multiplies the ZIP-317 base fee (>=1; default 20)")
 	fs.Uint64Var(&feeAddZat, "fee-add-zat", 0, "adds zatoshis on top of the conventional fee")
 	fs.Uint64Var(&minNoteZat, "min-note-zat", 0, "skip spendable notes with value < min-note-zat")
-	fs.Int64Var(&minconf, "minconf", 1, "minimum confirmations for spendable notes")
-	fs.UintVar(&expiryOffset, "expiry-offset", 40, "expiry height offset from next block height (chain tip + 1, min: 4)")
+	fs.Int64Var(&minconf, "minconf", txbuild.DefaultMinConfirmations, "minimum confirmations for spendable notes (default 100)")
+	fs.Uint64Var(&expiryOffset, "expiry-offset", 40, "expiry height offset from next block height (chain tip + 1, min: 4)")
 
 	fs.StringVar(&outPath, "out", "", "optional path to write TxPlan JSON")
 	fs.BoolVar(&jsonOut, "json", false, "JSON output")
@@ -226,6 +232,10 @@ func runSweep(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 2
+	}
+	coinTypeValue, accountValue, expiryOffsetValue, flagErr := plannerUint32Flags(coinType, account, expiryOffset)
+	if flagErr != nil {
+		return writeErr(stdout, stderr, jsonOut, types.ErrCodeInvalidRequest, flagErr.Error())
 	}
 
 	rpcURL, rpcUser, rpcPass, err := rpcConfigFromFlags(rpcURL, rpcUser, rpcPass)
@@ -253,15 +263,15 @@ func runSweep(args []string, stdout, stderr io.Writer) int {
 		ScanBearerToken: scanBearerToken,
 
 		WalletID: walletID,
-		CoinType: uint32(coinType),
-		Account:  uint32(account),
+		CoinType: coinTypeValue,
+		Account:  accountValue,
 
 		ToAddress:     to,
 		MemoHex:       memoHex,
 		ChangeAddress: changeAddr,
 
 		MinConfirmations: minconf,
-		ExpiryOffset:     uint32(expiryOffset),
+		ExpiryOffset:     expiryOffsetValue,
 		MinNoteZat:       minNoteZat,
 
 		FeeMultiplier: feeMultiplier,
@@ -294,14 +304,14 @@ func runConsolidate(args []string, stdout, stderr io.Writer) int {
 	var scanBearerToken string
 
 	var walletID string
-	var coinType uint
-	var account uint
+	var coinType uint64
+	var account uint64
 	var to string
 	var memoHex string
 	var changeAddr string
 	var maxSpends int
 	var minconf int64
-	var expiryOffset uint
+	var expiryOffset uint64
 	var feeMultiplier uint64
 	var feeAddZat uint64
 	var minNoteZat uint64
@@ -316,17 +326,17 @@ func runConsolidate(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&scanBearerToken, "scan-bearer-token", "", "optional bearer token for juno-scan HTTP API (Authorization: Bearer ...)")
 
 	fs.StringVar(&walletID, "wallet-id", "", "wallet id")
-	fs.UintVar(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
-	fs.UintVar(&account, "account", 0, "unified account id")
+	fs.Uint64Var(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
+	fs.Uint64Var(&account, "account", 0, "unified account id")
 	fs.StringVar(&to, "to", "", "destination unified address (j*1...)")
 	fs.StringVar(&memoHex, "memo-hex", "", "optional memo bytes (hex, <=512 bytes)")
 	fs.StringVar(&changeAddr, "change-address", "", "change unified address (j*1...) (defaults to --to)")
-	fs.IntVar(&maxSpends, "max-spends", 50, "max notes to consolidate into 1 output")
-	fs.Uint64Var(&feeMultiplier, "fee-multiplier", 1, "multiplies the ZIP-317 conventional fee (>=1)")
+	fs.IntVar(&maxSpends, "max-spends", 50, "max notes to consolidate into 1 output (2..200; default 50)")
+	fs.Uint64Var(&feeMultiplier, "fee-multiplier", txbuild.DefaultFeeMultiplier, "multiplies the ZIP-317 base fee (>=1; default 20)")
 	fs.Uint64Var(&feeAddZat, "fee-add-zat", 0, "adds zatoshis on top of the conventional fee")
 	fs.Uint64Var(&minNoteZat, "min-note-zat", 0, "skip spendable notes with value < min-note-zat")
-	fs.Int64Var(&minconf, "minconf", 1, "minimum confirmations for spendable notes")
-	fs.UintVar(&expiryOffset, "expiry-offset", 40, "expiry height offset from next block height (chain tip + 1, min: 4)")
+	fs.Int64Var(&minconf, "minconf", txbuild.DefaultMinConfirmations, "minimum confirmations for spendable notes (default 100)")
+	fs.Uint64Var(&expiryOffset, "expiry-offset", 40, "expiry height offset from next block height (chain tip + 1, min: 4)")
 
 	fs.StringVar(&outPath, "out", "", "optional path to write TxPlan JSON")
 	fs.BoolVar(&jsonOut, "json", false, "JSON output")
@@ -334,6 +344,13 @@ func runConsolidate(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 2
+	}
+	coinTypeValue, accountValue, expiryOffsetValue, flagErr := plannerUint32Flags(coinType, account, expiryOffset)
+	if flagErr != nil {
+		return writeErr(stdout, stderr, jsonOut, types.ErrCodeInvalidRequest, flagErr.Error())
+	}
+	if maxSpends < 2 || maxSpends > txbuild.MaxOrchardSpendNotes {
+		return writeErr(stdout, stderr, jsonOut, types.ErrCodeInvalidRequest, fmt.Sprintf("max-spends must be between 2 and %d", txbuild.MaxOrchardSpendNotes))
 	}
 
 	rpcURL, rpcUser, rpcPass, err := rpcConfigFromFlags(rpcURL, rpcUser, rpcPass)
@@ -361,8 +378,8 @@ func runConsolidate(args []string, stdout, stderr io.Writer) int {
 		ScanBearerToken: scanBearerToken,
 
 		WalletID: walletID,
-		CoinType: uint32(coinType),
-		Account:  uint32(account),
+		CoinType: coinTypeValue,
+		Account:  accountValue,
 
 		ToAddress:     to,
 		MemoHex:       memoHex,
@@ -371,7 +388,7 @@ func runConsolidate(args []string, stdout, stderr io.Writer) int {
 		MaxSpends: maxSpends,
 
 		MinConfirmations: minconf,
-		ExpiryOffset:     uint32(expiryOffset),
+		ExpiryOffset:     expiryOffsetValue,
 		MinNoteZat:       minNoteZat,
 
 		FeeMultiplier: feeMultiplier,
@@ -404,12 +421,12 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 	var scanBearerToken string
 
 	var walletID string
-	var coinType uint
-	var account uint
+	var coinType uint64
+	var account uint64
 	var outputsFile string
 	var changeAddr string
 	var minconf int64
-	var expiryOffset uint
+	var expiryOffset uint64
 	var feeMultiplier uint64
 	var feeAddZat uint64
 	var minChangeZat uint64
@@ -425,16 +442,16 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 	fs.StringVar(&scanBearerToken, "scan-bearer-token", "", "optional bearer token for juno-scan HTTP API (Authorization: Bearer ...)")
 
 	fs.StringVar(&walletID, "wallet-id", "", "wallet id")
-	fs.UintVar(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
-	fs.UintVar(&account, "account", 0, "unified account id")
+	fs.Uint64Var(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
+	fs.Uint64Var(&account, "account", 0, "unified account id")
 	fs.StringVar(&outputsFile, "outputs-file", "", "path to JSON array of TxOutputs (or - for stdin)")
 	fs.StringVar(&changeAddr, "change-address", "", "change unified address (j*1...)")
-	fs.Uint64Var(&feeMultiplier, "fee-multiplier", 1, "multiplies the ZIP-317 conventional fee (>=1)")
+	fs.Uint64Var(&feeMultiplier, "fee-multiplier", txbuild.DefaultFeeMultiplier, "multiplies the ZIP-317 base fee (>=1; default 20)")
 	fs.Uint64Var(&feeAddZat, "fee-add-zat", 0, "adds zatoshis on top of the conventional fee")
 	fs.Uint64Var(&minChangeZat, "min-change-zat", 0, "if change is in (0, min-change-zat), add it to fee and omit change output")
 	fs.Uint64Var(&minNoteZat, "min-note-zat", 0, "skip spendable notes with value < min-note-zat")
-	fs.Int64Var(&minconf, "minconf", 1, "minimum confirmations for spendable notes")
-	fs.UintVar(&expiryOffset, "expiry-offset", 40, "expiry height offset from next block height (chain tip + 1, min: 4)")
+	fs.Int64Var(&minconf, "minconf", txbuild.DefaultMinConfirmations, "minimum confirmations for spendable notes (default 100)")
+	fs.Uint64Var(&expiryOffset, "expiry-offset", 40, "expiry height offset from next block height (chain tip + 1, min: 4)")
 
 	fs.StringVar(&outPath, "out", "", "optional path to write TxPlan JSON")
 	fs.BoolVar(&jsonOut, "json", false, "JSON output")
@@ -442,6 +459,10 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 2
+	}
+	coinTypeValue, accountValue, expiryOffsetValue, flagErr := plannerUint32Flags(coinType, account, expiryOffset)
+	if flagErr != nil {
+		return writeErr(stdout, stderr, jsonOut, types.ErrCodeInvalidRequest, flagErr.Error())
 	}
 
 	outputsFile = strings.TrimSpace(outputsFile)
@@ -452,6 +473,9 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 	outs, err := loadOutputs(outputsFile)
 	if err != nil {
 		return writeErr(stdout, stderr, jsonOut, types.ErrCodeInvalidRequest, err.Error())
+	}
+	if len(outs) > txbuild.MaxOrchardOutputs {
+		return writeErr(stdout, stderr, jsonOut, types.ErrCodeInvalidRequest, fmt.Sprintf("outputs file must contain at most %d entries", txbuild.MaxOrchardOutputs))
 	}
 
 	rpcURL, rpcUser, rpcPass, err = rpcConfigFromFlags(rpcURL, rpcUser, rpcPass)
@@ -482,15 +506,15 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 		ScanBearerToken: scanBearerToken,
 
 		WalletID: walletID,
-		CoinType: uint32(coinType),
-		Account:  uint32(account),
+		CoinType: coinTypeValue,
+		Account:  accountValue,
 
 		Kind:          kind,
 		Outputs:       outs,
 		ChangeAddress: changeAddr,
 
 		MinConfirmations: minconf,
-		ExpiryOffset:     uint32(expiryOffset),
+		ExpiryOffset:     expiryOffsetValue,
 		MinNoteZat:       minNoteZat,
 
 		FeeMultiplier: feeMultiplier,
@@ -571,6 +595,20 @@ func rpcConfigFromFlags(url, user, pass string) (string, string, string, error) 
 		return "", "", "", fmt.Errorf("rpc-url is required (or set JUNO_RPC_URL)")
 	}
 	return url, strings.TrimSpace(user), strings.TrimSpace(pass), nil
+}
+
+func plannerUint32Flags(coinType, account, expiryOffset uint64) (uint32, uint32, uint32, error) {
+	const maxUint32 = uint64(^uint32(0))
+	if coinType > maxUint32 {
+		return 0, 0, 0, errors.New("coin-type must fit uint32")
+	}
+	if account >= 1<<31 {
+		return 0, 0, 0, errors.New("account must be below 2147483648")
+	}
+	if expiryOffset > maxUint32 {
+		return 0, 0, 0, errors.New("expiry-offset must fit uint32")
+	}
+	return uint32(coinType), uint32(account), uint32(expiryOffset), nil
 }
 
 func writeErr(stdout, stderr io.Writer, jsonOut bool, code types.ErrorCode, msg string) int {

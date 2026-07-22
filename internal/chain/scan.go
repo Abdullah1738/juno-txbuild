@@ -30,7 +30,7 @@ func GetChainInfo(ctx context.Context, rpc RPC) (ChainInfo, error) {
 		Chain     string `json:"chain"`
 		Blocks    int64  `json:"blocks"`
 		Consensus struct {
-			Chaintip string `json:"chaintip"`
+			NextBlock string `json:"nextblock"`
 		} `json:"consensus"`
 	}
 	if err := rpc.Call(ctx, "getblockchaininfo", nil, &resp); err != nil {
@@ -42,13 +42,13 @@ func GetChainInfo(ctx context.Context, rpc RPC) (ChainInfo, error) {
 		return ChainInfo{}, errors.New("chain: missing chain")
 	}
 
-	chaintip := strings.TrimSpace(resp.Consensus.Chaintip)
-	if chaintip == "" {
-		return ChainInfo{}, errors.New("chain: missing consensus.chaintip")
+	nextBlock := strings.TrimSpace(resp.Consensus.NextBlock)
+	if nextBlock == "" {
+		return ChainInfo{}, errors.New("chain: missing consensus.nextblock")
 	}
-	branchU64, err := strconv.ParseUint(chaintip, 16, 32)
+	branchU64, err := strconv.ParseUint(nextBlock, 16, 32)
 	if err != nil {
-		return ChainInfo{}, errors.New("chain: invalid consensus.chaintip")
+		return ChainInfo{}, errors.New("chain: invalid consensus.nextblock")
 	}
 
 	return ChainInfo{
