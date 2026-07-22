@@ -43,7 +43,7 @@ func TestCaptureScannerAnchor(t *testing.T) {
 
 			mux := http.NewServeMux()
 			mux.HandleFunc("/v1/health", func(w http.ResponseWriter, r *http.Request) {
-				response := map[string]any{"status": tt.status}
+				response := map[string]any{"status": tt.status, "event_epoch": strings.Repeat("e", 64)}
 				if tt.scannerHeight != nil {
 					response["scanned_height"] = tt.scannerHeight
 				}
@@ -113,11 +113,12 @@ func TestVerifyScannerAnchorDetectsMidRequestChanges(t *testing.T) {
 			mux.HandleFunc("/v1/health", func(w http.ResponseWriter, r *http.Request) {
 				response := map[string]any{
 					"status":         "ok",
+					"event_epoch":    strings.Repeat("e", 64),
 					"scanned_height": int64(100),
 					"scanned_hash":   "anchor-hash",
 				}
 				if healthCalls.Add(1) > 1 {
-					response = map[string]any{"status": tt.secondScannerStatus}
+					response = map[string]any{"status": tt.secondScannerStatus, "event_epoch": strings.Repeat("e", 64)}
 					if tt.secondScannerHeight != nil {
 						response["scanned_height"] = *tt.secondScannerHeight
 					}

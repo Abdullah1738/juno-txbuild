@@ -3,6 +3,8 @@ package txbuild
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 
 	"github.com/Abdullah1738/juno-sdk-go/types"
 	"github.com/Abdullah1738/juno-txbuild/internal/logic"
@@ -22,7 +24,11 @@ const (
 	txExpiringSoonThreshold uint64 = 3
 
 	ErrCodeTooManyInputs types.ErrorCode = "too_many_inputs"
+
+	canonicalNoteIDPattern = `^[0-9a-f]{64}:(0|[1-9][0-9]*)$`
 )
+
+var canonicalNoteIDRE = regexp.MustCompile(canonicalNoteIDPattern)
 
 func normalizedMinConfirmations(value int64) int64 {
 	if value <= 0 {
@@ -63,6 +69,9 @@ func signerCompatiblePlan(plan types.TxPlan, hasChange bool) (types.TxPlan, erro
 	if err := ensureOrchardSpendLimit(len(plan.Notes)); err != nil {
 		return types.TxPlan{}, err
 	}
+	if err := validatePlanNoteIDs(plan.Notes); err != nil {
+		return types.TxPlan{}, err
+	}
 	outputCount := len(plan.Outputs)
 	if hasChange {
 		outputCount++
@@ -74,6 +83,39 @@ func signerCompatiblePlan(plan types.TxPlan, hasChange bool) (types.TxPlan, erro
 		}
 	}
 	return plan, nil
+}
+
+func validatePlanNoteIDs(notes []types.OrchardSpendNote) error {
+	seen := make(map[string]struct{}, len(notes))
+	for i, note := range notes {
+		if note.NoteID == "" {
+			return types.CodedError{
+				Code:    types.ErrCodeInvalidRequest,
+				Message: fmt.Sprintf("notes[%d].note_id required", i),
+			}
+		}
+		parts := canonicalNoteIDRE.FindStringSubmatch(note.NoteID)
+		if parts == nil {
+			return types.CodedError{
+				Code:    types.ErrCodeInvalidRequest,
+				Message: fmt.Sprintf("notes[%d].note_id must match %s", i, canonicalNoteIDPattern),
+			}
+		}
+		if _, err := strconv.ParseUint(parts[1], 10, 32); err != nil {
+			return types.CodedError{
+				Code:    types.ErrCodeInvalidRequest,
+				Message: fmt.Sprintf("notes[%d].note_id action index must fit uint32", i),
+			}
+		}
+		if _, exists := seen[note.NoteID]; exists {
+			return types.CodedError{
+				Code:    types.ErrCodeInvalidRequest,
+				Message: fmt.Sprintf("notes[%d].note_id duplicates an earlier selected note", i),
+			}
+		}
+		seen[note.NoteID] = struct{}{}
+	}
+	return nil
 }
 
 func orchardChangeRequired(totalIn, totalOut, feeZat uint64) (bool, error) {

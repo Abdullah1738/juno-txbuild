@@ -144,6 +144,7 @@ func TestScanBackedPlannersReverifyAnchorAfterWitness(t *testing.T) {
 				}
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"status":         "ok",
+					"event_epoch":    strings.Repeat("e", 64),
 					"scanned_height": anchorHeight,
 					"scanned_hash":   hash,
 				})

@@ -56,7 +56,7 @@ func TestSelectNotesForPlanDoesNotMisclassifyArithmeticFailure(t *testing.T) {
 
 func TestSignerCompatiblePlanEnforcesInputAndOutputLimits(t *testing.T) {
 	withinLimit := types.TxPlan{
-		Notes:   make([]types.OrchardSpendNote, MaxOrchardSpendNotes),
+		Notes:   makePlanNotes(MaxOrchardSpendNotes),
 		Outputs: make([]types.TxOutput, MaxOrchardOutputs),
 	}
 	if _, err := signerCompatiblePlan(withinLimit, false); err != nil {
@@ -73,7 +73,7 @@ func TestSignerCompatiblePlanEnforcesInputAndOutputLimits(t *testing.T) {
 	}
 
 	tooManyInputs := withinLimit
-	tooManyInputs.Notes = make([]types.OrchardSpendNote, MaxOrchardSpendNotes+1)
+	tooManyInputs.Notes = makePlanNotes(MaxOrchardSpendNotes + 1)
 	_, err = signerCompatiblePlan(tooManyInputs, false)
 	assertCodedError(t, err, ErrCodeTooManyInputs, "maximum is 200")
 

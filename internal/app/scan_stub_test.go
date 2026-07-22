@@ -57,6 +57,7 @@ func startScanStub(t *testing.T, ctx context.Context, rpc *junocashd.Client, bea
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status":         "ok",
+			"event_epoch":    strings.Repeat("e", 64),
 			"scanned_height": fx.chainHeight,
 			"scanned_hash":   fx.chainHash,
 		})

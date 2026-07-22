@@ -3,7 +3,7 @@ module github.com/Abdullah1738/juno-txbuild
 go 1.24.0
 
 require (
-	github.com/Abdullah1738/juno-sdk-go v1.3.2
+	github.com/Abdullah1738/juno-sdk-go v1.4.1-0.20260722111706-0328c96a8906
 	github.com/docker/docker v28.5.1+incompatible
 	github.com/docker/go-connections v0.6.0
 	github.com/testcontainers/testcontainers-go v0.40.0

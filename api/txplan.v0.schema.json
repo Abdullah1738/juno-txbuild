@@ -140,6 +140,7 @@
     "OrchardSpendNote": {
       "type": "object",
       "required": [
+        "note_id",
         "action_nullifier",
         "cmx",
         "position",
@@ -150,11 +151,12 @@
       "properties": {
         "note_id": {
           "type": "string",
-          "description": "Optional internal note identifier (for debugging/traceability)"
+          "pattern": "^[0-9a-f]{64}:(0|[1-9][0-9]*)$",
+          "description": "Required canonical selected-note identity: lowercase source txid plus a base-10 uint32 action index"
         },
         "action_nullifier": {
           "type": "string",
-          "description": "Orchard action nullifier (hex)"
+          "description": "Nullifier field from the Orchard action that created this note; creating-action decryption context, not the nullifier later derived when spending the note (hex)"
         },
         "cmx": {
           "type": "string",

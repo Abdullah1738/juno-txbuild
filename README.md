@@ -84,7 +84,7 @@ If `juno-scan` is configured with `-api-bearer-token`, pass `--scan-bearer-token
 
 The final selected-note recheck is not a reservation. `juno-txbuild` does not coordinate concurrent planners, and scanner pending-spend state is observational rather than a lock.
 
-The exchange must serialize planning per wallet and atomically reserve every returned `notes[].note_id` in its own database before signing. Reservation is all-or-nothing: if any note is already reserved, discard the entire plan and rebuild. Never sign two plans with overlapping note IDs. Keep reservations until the transaction is confirmed or is conclusively rejected or expired and scanner state has reconciled; only then release them.
+Every returned note has a required, unique canonical `note_id` in the form `<64-lowercase-hex-source-txid>:<base-10-uint32-action-index>`. The exchange must serialize planning per wallet and atomically reserve every returned `notes[].note_id` in its own database before signing. Reservation is all-or-nothing: reject a plan with a missing, malformed, duplicate, or already-reserved note ID, then rebuild from a fresh snapshot. Never sign two plans with overlapping note IDs. Keep reservations until the transaction is confirmed or is conclusively rejected or expired and scanner state has reconciled; only then release them.
 
 ## File formats
 

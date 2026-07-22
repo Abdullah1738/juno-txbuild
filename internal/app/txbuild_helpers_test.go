@@ -423,7 +423,23 @@ func validatePlanBasics(plan types.TxPlan) error {
 	if len(plan.Notes) == 0 {
 		return errors.New("notes")
 	}
+	seenNoteIDs := make(map[string]struct{}, len(plan.Notes))
 	for _, n := range plan.Notes {
+		parts := strings.Split(n.NoteID, ":")
+		if len(parts) != 2 || len(parts[0]) != 64 || parts[0] != strings.ToLower(parts[0]) {
+			return errors.New("note_id")
+		}
+		if _, err := hex.DecodeString(parts[0]); err != nil {
+			return errors.New("note_id")
+		}
+		actionIndex, err := strconv.ParseUint(parts[1], 10, 32)
+		if err != nil || n.NoteID != fmt.Sprintf("%s:%d", parts[0], actionIndex) {
+			return errors.New("note_id")
+		}
+		if _, exists := seenNoteIDs[n.NoteID]; exists {
+			return errors.New("note_id_duplicate")
+		}
+		seenNoteIDs[n.NoteID] = struct{}{}
 		if len(n.Path) != 32 {
 			return errors.New("witness_path")
 		}
