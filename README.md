@@ -30,6 +30,8 @@ Environment variables (optional; avoid passing secrets on the command line):
 
 Run `juno-txbuild --help` (or `juno-txbuild <command> -h`) for the complete flag reference.
 
+Every command accepts repeatable `--exclude-note-id <txid:index>` flags. Use them to keep notes already reserved by other transaction attempts out of the candidate set. The Go API exposes the same input as `ExcludedNoteIDs []string` on `SendConfig`, `PlanConfig`, `SweepConfig`, and `ConsolidateConfig`.
+
 All commands default to `--minconf 100`. The signer accepts at most 200 Orchard inputs and 200 total Orchard outputs, including implicit change. A plan may have 200 explicit outputs only when it creates no change. If a withdrawal needs more inputs, txbuild returns `too_many_inputs`; consolidate notes and retry.
 
 `--coin-type 0` infers the ZIP-32 coin type from the node (`8133` mainnet, `8134` testnet, `8135` regtest). An explicit value must match the connected network.
@@ -84,7 +86,25 @@ If `juno-scan` is configured with `-api-bearer-token`, pass `--scan-bearer-token
 
 The final selected-note recheck is not a reservation. `juno-txbuild` does not coordinate concurrent planners, and scanner pending-spend state is observational rather than a lock.
 
-Every returned note has a required, unique canonical `note_id` in the form `<64-lowercase-hex-source-txid>:<base-10-uint32-action-index>`. The exchange must serialize planning per wallet and atomically reserve every returned `notes[].note_id` in its own database before signing. Reservation is all-or-nothing: reject a plan with a missing, malformed, duplicate, or already-reserved note ID, then rebuild from a fresh snapshot. Never sign two plans with overlapping note IDs. Keep reservations until the transaction is confirmed or is conclusively rejected or expired and scanner state has reconciled; only then release them.
+Every returned note has a required, unique canonical `note_id` in the form `<64-lowercase-hex-source-txid>:<base-10-uint32-action-index>`. Pass every active reservation for the source wallet back through `ExcludedNoteIDs` or repeated `--exclude-note-id` flags when building another plan. Exclusions are applied before deterministic selection in both node-backed and scanner-backed modes. Unknown canonical IDs are harmless and ignored. Missing, malformed, non-canonical, or duplicate exclusion inputs fail with `invalid_request`; if the remaining candidates cannot fund the transaction, planning fails with `insufficient_balance`.
+
+Exclusion is still not a database lock. A concurrent coordinator should:
+
+1. Read the wallet's active note reservations and build with those note IDs excluded.
+2. Atomically reserve every returned `notes[].note_id`, with a unique constraint on the note ID (scoped by network if the database mixes networks).
+3. If any reservation conflicts, reserve none, discard the plan, refresh the exclusion set, and rebuild.
+4. Sign only after the complete selected-note set is durably reserved.
+
+Serializing this loop per wallet is simplest, but the atomic all-or-nothing reservation and conflict retry remain required for multiple coordinator replicas. Never sign two plans with overlapping note IDs. Keep reservations until the transaction is confirmed or is conclusively rejected or expired and scanner state has reconciled; only then release them.
+
+Go callers can provide exclusions directly:
+
+```go
+plan, err := txbuild.PlanSend(ctx, txbuild.SendConfig{
+    // RPC, scanner, wallet, destination, amount, and change settings omitted.
+    ExcludedNoteIDs: activeReservationNoteIDs,
+})
+```
 
 ## File formats
 

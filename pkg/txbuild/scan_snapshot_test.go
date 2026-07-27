@@ -34,7 +34,7 @@ func TestScanBackedPlannersReverifyAnchorAfterWitness(t *testing.T) {
 					MinConfirmations: 1,
 					ExpiryOffset:     40,
 					FeeMultiplier:    1,
-				}, 1_000_000)
+				}, 1_000_000, nil)
 				return err
 			},
 		},
@@ -49,7 +49,7 @@ func TestScanBackedPlannersReverifyAnchorAfterWitness(t *testing.T) {
 					MinConfirmations: 1,
 					ExpiryOffset:     40,
 					FeeMultiplier:    1,
-				})
+				}, nil)
 				return err
 			},
 		},
@@ -65,7 +65,7 @@ func TestScanBackedPlannersReverifyAnchorAfterWitness(t *testing.T) {
 					MinConfirmations: 1,
 					ExpiryOffset:     40,
 					FeeMultiplier:    1,
-				})
+				}, nil)
 				return err
 			},
 		},

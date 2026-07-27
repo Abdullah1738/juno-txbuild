@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/Abdullah1738/juno-sdk-go/types"
 	"github.com/Abdullah1738/juno-txbuild/internal/logic"
@@ -116,6 +117,54 @@ func validatePlanNoteIDs(notes []types.OrchardSpendNote) error {
 		seen[note.NoteID] = struct{}{}
 	}
 	return nil
+}
+
+func validateExcludedNoteIDs(noteIDs []string) (map[string]struct{}, error) {
+	seen := make(map[string]struct{}, len(noteIDs))
+	for i, noteID := range noteIDs {
+		if noteID == "" {
+			return nil, types.CodedError{
+				Code:    types.ErrCodeInvalidRequest,
+				Message: fmt.Sprintf("excluded_note_ids[%d] required", i),
+			}
+		}
+		parts := canonicalNoteIDRE.FindStringSubmatch(noteID)
+		if parts == nil {
+			return nil, types.CodedError{
+				Code:    types.ErrCodeInvalidRequest,
+				Message: fmt.Sprintf("excluded_note_ids[%d] must match %s", i, canonicalNoteIDPattern),
+			}
+		}
+		if _, err := strconv.ParseUint(parts[1], 10, 32); err != nil {
+			return nil, types.CodedError{
+				Code:    types.ErrCodeInvalidRequest,
+				Message: fmt.Sprintf("excluded_note_ids[%d] action index must fit uint32", i),
+			}
+		}
+		if _, exists := seen[noteID]; exists {
+			return nil, types.CodedError{
+				Code:    types.ErrCodeInvalidRequest,
+				Message: fmt.Sprintf("excluded_note_ids[%d] duplicates an earlier excluded note", i),
+			}
+		}
+		seen[noteID] = struct{}{}
+	}
+	return seen, nil
+}
+
+func filterExcludedUnspentNotes(notes []logic.UnspentNote, excluded map[string]struct{}) []logic.UnspentNote {
+	if len(excluded) == 0 {
+		return notes
+	}
+	out := make([]logic.UnspentNote, 0, len(notes))
+	for _, note := range notes {
+		noteID := fmt.Sprintf("%s:%d", strings.ToLower(strings.TrimSpace(note.TxID)), note.ActionIndex)
+		if _, skip := excluded[noteID]; skip {
+			continue
+		}
+		out = append(out, note)
+	}
+	return out
 }
 
 func orchardChangeRequired(totalIn, totalOut, feeZat uint64) (bool, error) {

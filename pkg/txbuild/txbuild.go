@@ -33,6 +33,9 @@ type SendConfig struct {
 	WalletID string
 	CoinType uint32
 	Account  uint32
+	// ExcludedNoteIDs contains canonical note IDs that must not be selected.
+	// Coordinators use this to exclude notes reserved by other transaction attempts.
+	ExcludedNoteIDs []string
 
 	ToAddress string
 	AmountZat string
@@ -61,6 +64,8 @@ func PlanSend(ctx context.Context, cfg SendConfig) (types.TxPlan, error) {
 		WalletID: cfg.WalletID,
 		CoinType: cfg.CoinType,
 		Account:  cfg.Account,
+
+		ExcludedNoteIDs: cfg.ExcludedNoteIDs,
 
 		Kind: types.TxPlanKindWithdrawal,
 		Outputs: []types.TxOutput{
@@ -91,6 +96,9 @@ type PlanConfig struct {
 	WalletID string
 	CoinType uint32
 	Account  uint32
+	// ExcludedNoteIDs contains canonical note IDs that must not be selected.
+	// Unknown canonical IDs are ignored; malformed or duplicate IDs are rejected.
+	ExcludedNoteIDs []string
 
 	Kind          types.TxPlanKind
 	Outputs       []types.TxOutput
@@ -121,6 +129,10 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "wallet_id required"}
 	}
 	if err := validateAccount(cfg.Account); err != nil {
+		return types.TxPlan{}, err
+	}
+	excludedNoteIDs, err := validateExcludedNoteIDs(cfg.ExcludedNoteIDs)
+	if err != nil {
 		return types.TxPlan{}, err
 	}
 	switch cfg.Kind {
@@ -188,7 +200,7 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 	anchorHeight := uint32(chainInfo.Height)
 
 	if cfg.ScanURL != "" {
-		return planWithScan(ctx, rpc, chainInfo, coinType, cfg, totalOut)
+		return planWithScan(ctx, rpc, chainInfo, coinType, cfg, totalOut, excludedNoteIDs)
 	}
 	nodeSnapshot, err := captureNodeAnchor(ctx, rpc, chainInfo.Height)
 	if err != nil {
@@ -208,6 +220,7 @@ func Plan(ctx context.Context, cfg PlanConfig) (types.TxPlan, error) {
 		return types.TxPlan{}, err
 	}
 	notes = logic.FilterNotesMinValue(notes, cfg.MinNoteZat)
+	notes = filterExcludedUnspentNotes(notes, excludedNoteIDs)
 	if len(notes) == 0 {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "no spendable notes"}
 	}
@@ -321,6 +334,9 @@ type SweepConfig struct {
 	WalletID string
 	CoinType uint32
 	Account  uint32
+	// ExcludedNoteIDs contains canonical note IDs that must not be selected.
+	// Unknown canonical IDs are ignored; malformed or duplicate IDs are rejected.
+	ExcludedNoteIDs []string
 
 	ToAddress     string
 	MemoHex       string
@@ -352,6 +368,10 @@ func PlanSweep(ctx context.Context, cfg SweepConfig) (types.TxPlan, error) {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "wallet_id required"}
 	}
 	if err := validateAccount(cfg.Account); err != nil {
+		return types.TxPlan{}, err
+	}
+	excludedNoteIDs, err := validateExcludedNoteIDs(cfg.ExcludedNoteIDs)
+	if err != nil {
 		return types.TxPlan{}, err
 	}
 	if cfg.ToAddress == "" {
@@ -389,7 +409,7 @@ func PlanSweep(ctx context.Context, cfg SweepConfig) (types.TxPlan, error) {
 	anchorHeight := uint32(chainInfo.Height)
 
 	if cfg.ScanURL != "" {
-		return planSweepWithScan(ctx, rpc, chainInfo, coinType, cfg)
+		return planSweepWithScan(ctx, rpc, chainInfo, coinType, cfg, excludedNoteIDs)
 	}
 	nodeSnapshot, err := captureNodeAnchor(ctx, rpc, chainInfo.Height)
 	if err != nil {
@@ -409,6 +429,7 @@ func PlanSweep(ctx context.Context, cfg SweepConfig) (types.TxPlan, error) {
 		return types.TxPlan{}, err
 	}
 	notes = logic.FilterNotesMinValue(notes, cfg.MinNoteZat)
+	notes = filterExcludedUnspentNotes(notes, excludedNoteIDs)
 	if len(notes) == 0 {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "no spendable notes"}
 	}
@@ -522,6 +543,9 @@ type ConsolidateConfig struct {
 	WalletID string
 	CoinType uint32
 	Account  uint32
+	// ExcludedNoteIDs contains canonical note IDs that must not be selected.
+	// Unknown canonical IDs are ignored; malformed or duplicate IDs are rejected.
+	ExcludedNoteIDs []string
 
 	ToAddress     string
 	MemoHex       string
@@ -555,6 +579,10 @@ func PlanConsolidate(ctx context.Context, cfg ConsolidateConfig) (types.TxPlan, 
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "wallet_id required"}
 	}
 	if err := validateAccount(cfg.Account); err != nil {
+		return types.TxPlan{}, err
+	}
+	excludedNoteIDs, err := validateExcludedNoteIDs(cfg.ExcludedNoteIDs)
+	if err != nil {
 		return types.TxPlan{}, err
 	}
 	if cfg.ToAddress == "" {
@@ -598,7 +626,7 @@ func PlanConsolidate(ctx context.Context, cfg ConsolidateConfig) (types.TxPlan, 
 	anchorHeight := uint32(chainInfo.Height)
 
 	if cfg.ScanURL != "" {
-		return planConsolidateWithScan(ctx, rpc, chainInfo, coinType, cfg)
+		return planConsolidateWithScan(ctx, rpc, chainInfo, coinType, cfg, excludedNoteIDs)
 	}
 	nodeSnapshot, err := captureNodeAnchor(ctx, rpc, chainInfo.Height)
 	if err != nil {
@@ -618,6 +646,7 @@ func PlanConsolidate(ctx context.Context, cfg ConsolidateConfig) (types.TxPlan, 
 		return types.TxPlan{}, err
 	}
 	notes = logic.FilterNotesMinValue(notes, cfg.MinNoteZat)
+	notes = filterExcludedUnspentNotes(notes, excludedNoteIDs)
 	if len(notes) < 2 {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "not enough spendable notes to consolidate"}
 	}
@@ -723,7 +752,7 @@ type spendableNote struct {
 	ValueZat    uint64
 }
 
-func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.ChainInfo, coinType uint32, cfg PlanConfig, totalOut uint64) (types.TxPlan, error) {
+func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.ChainInfo, coinType uint32, cfg PlanConfig, totalOut uint64, excludedNoteIDs map[string]struct{}) (types.TxPlan, error) {
 	sc, err := newScanClient(cfg.ScanURL, cfg.ScanBearerToken)
 	if err != nil {
 		return types.TxPlan{}, err
@@ -739,6 +768,7 @@ func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.Ch
 	}
 
 	unspent := logic.FilterNotesMinValue(notesToUnspent(notes), cfg.MinNoteZat)
+	unspent = filterExcludedUnspentNotes(unspent, excludedNoteIDs)
 	if len(unspent) == 0 {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "no spendable notes"}
 	}
@@ -862,7 +892,7 @@ func planWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.Ch
 	return plan, nil
 }
 
-func planConsolidateWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.ChainInfo, coinType uint32, cfg ConsolidateConfig) (types.TxPlan, error) {
+func planConsolidateWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.ChainInfo, coinType uint32, cfg ConsolidateConfig, excludedNoteIDs map[string]struct{}) (types.TxPlan, error) {
 	sc, err := newScanClient(cfg.ScanURL, cfg.ScanBearerToken)
 	if err != nil {
 		return types.TxPlan{}, err
@@ -878,6 +908,7 @@ func planConsolidateWithScan(ctx context.Context, rpc *junocashd.Client, chainIn
 	}
 
 	unspent := logic.FilterNotesMinValue(notesToUnspent(notes), cfg.MinNoteZat)
+	unspent = filterExcludedUnspentNotes(unspent, excludedNoteIDs)
 	if len(unspent) < 2 {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInvalidRequest, Message: "not enough spendable notes to consolidate"}
 	}
@@ -999,7 +1030,7 @@ func planConsolidateWithScan(ctx context.Context, rpc *junocashd.Client, chainIn
 	return plan, nil
 }
 
-func planSweepWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.ChainInfo, coinType uint32, cfg SweepConfig) (types.TxPlan, error) {
+func planSweepWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo chain.ChainInfo, coinType uint32, cfg SweepConfig, excludedNoteIDs map[string]struct{}) (types.TxPlan, error) {
 	sc, err := newScanClient(cfg.ScanURL, cfg.ScanBearerToken)
 	if err != nil {
 		return types.TxPlan{}, err
@@ -1013,6 +1044,7 @@ func planSweepWithScan(ctx context.Context, rpc *junocashd.Client, chainInfo cha
 	if err != nil {
 		return types.TxPlan{}, err
 	}
+	notes = filterExcludedSpendableNotes(notes, excludedNoteIDs)
 	if len(notes) == 0 {
 		return types.TxPlan{}, types.CodedError{Code: types.ErrCodeInsufficientBalance, Message: "no spendable notes"}
 	}
@@ -1369,6 +1401,21 @@ func notesToUnspent(ns []spendableNote) []logic.UnspentNote {
 	out := make([]logic.UnspentNote, 0, len(ns))
 	for _, n := range ns {
 		out = append(out, logic.UnspentNote{TxID: n.TxID, ActionIndex: n.ActionIndex, ValueZat: n.ValueZat})
+	}
+	return out
+}
+
+func filterExcludedSpendableNotes(notes []spendableNote, excluded map[string]struct{}) []spendableNote {
+	if len(excluded) == 0 {
+		return notes
+	}
+	out := make([]spendableNote, 0, len(notes))
+	for _, note := range notes {
+		noteID := fmt.Sprintf("%s:%d", strings.ToLower(strings.TrimSpace(note.TxID)), note.ActionIndex)
+		if _, skip := excluded[noteID]; skip {
+			continue
+		}
+		out = append(out, note)
 	}
 	return out
 }

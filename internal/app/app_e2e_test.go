@@ -112,6 +112,72 @@ func TestE2E_CLI_SendBuildsTxPlan(t *testing.T) {
 		t.Fatalf("unexpected note values (min=%d max=%d)", minNote, maxNote)
 	}
 
+	runWithExclusions := func(excludedNoteIDs []string) ([]byte, error) {
+		args := []string{
+			"send",
+			"--rpc-url", jd.RPCURL,
+			"--rpc-user", jd.RPCUser,
+			"--rpc-pass", jd.RPCPassword,
+			"--wallet-id", "test-wallet",
+			"--account", "0",
+			"--to", changeAddr,
+			"--amount-zat", "1000000",
+			"--change-address", changeAddr,
+			"--minconf", "1",
+			"--json",
+		}
+		for _, noteID := range excludedNoteIDs {
+			args = append(args, "--exclude-note-id", noteID)
+		}
+		return exec.CommandContext(ctx, bin, args...).Output()
+	}
+
+	out, err = runWithExclusions(nil)
+	if err != nil {
+		t.Fatalf("baseline exclusion CLI plan: %v", err)
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("decode baseline exclusion plan: %v", err)
+	}
+	if resp.Status != "ok" || len(resp.Data.Notes) != 1 {
+		t.Fatalf("unexpected baseline exclusion response: %s", out)
+	}
+	excludedNoteID := resp.Data.Notes[0].NoteID
+
+	out, err = runWithExclusions([]string{excludedNoteID})
+	if err != nil {
+		t.Fatalf("alternate exclusion CLI plan: %v", err)
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("decode alternate exclusion plan: %v", err)
+	}
+	if resp.Status != "ok" || len(resp.Data.Notes) == 0 {
+		t.Fatalf("unexpected alternate exclusion response: %s", out)
+	}
+	for _, note := range resp.Data.Notes {
+		if note.NoteID == excludedNoteID {
+			t.Fatalf("excluded note %q was selected", note.NoteID)
+		}
+	}
+
+	allNoteIDs := make([]string, 0, len(notes))
+	for _, note := range notes {
+		allNoteIDs = append(allNoteIDs, note.TxID+":"+strconv.FormatUint(uint64(note.OutIndex), 10))
+	}
+	out, err = runWithExclusions(allNoteIDs)
+	if err == nil {
+		t.Fatal("all-excluded CLI plan unexpectedly succeeded")
+	}
+	var excludedErrResp struct {
+		Status string `json:"status"`
+		Error  struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if decodeErr := json.Unmarshal(out, &excludedErrResp); decodeErr != nil || excludedErrResp.Status != "err" || excludedErrResp.Error.Code != string(types.ErrCodeInsufficientBalance) {
+		t.Fatalf("unexpected all-excluded response: %s (decode=%v)", out, decodeErr)
+	}
+
 	cmd = exec.CommandContext(
 		ctx,
 		bin,

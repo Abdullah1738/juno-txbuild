@@ -65,6 +65,17 @@ func TestIntegration_PlanSend(t *testing.T) {
 	if minNote == 0 || maxNote == 0 || minNote == maxNote {
 		t.Fatalf("unexpected note values (min=%d max=%d)", minNote, maxNote)
 	}
+	exercisePlanSendExclusions(t, ctx, txbuild.SendConfig{
+		RPCURL:           jd.RPCURL,
+		RPCUser:          jd.RPCUser,
+		RPCPass:          jd.RPCPassword,
+		WalletID:         "test-wallet",
+		ToAddress:        changeAddr,
+		AmountZat:        "1000000",
+		ChangeAddress:    changeAddr,
+		MinConfirmations: 1,
+		ExpiryOffset:     40,
+	}, spendableNoteIDs(notes))
 
 	plan, err = txbuild.PlanSend(ctx, txbuild.SendConfig{
 		RPCURL:  jd.RPCURL,
@@ -146,6 +157,18 @@ func TestIntegration_PlanSend_WithScanURL(t *testing.T) {
 	}
 
 	scanSrv := startScanStub(t, ctx, rpc, "")
+	exercisePlanSendExclusions(t, ctx, txbuild.SendConfig{
+		RPCURL:           jd.RPCURL,
+		RPCUser:          jd.RPCUser,
+		RPCPass:          jd.RPCPassword,
+		ScanURL:          scanSrv.URL,
+		WalletID:         "test-wallet",
+		ToAddress:        changeAddr,
+		AmountZat:        "1000000",
+		ChangeAddress:    changeAddr,
+		MinConfirmations: 1,
+		ExpiryOffset:     40,
+	}, spendableNoteIDs(notes))
 
 	plan, err := txbuild.PlanSend(ctx, txbuild.SendConfig{
 		RPCURL:  jd.RPCURL,
@@ -294,7 +317,7 @@ func TestIntegration_PlanSend_WithScanURL_WithBearerToken(t *testing.T) {
 }
 
 func TestIntegration_PlanSweep(t *testing.T) {
-	jd, _ := startJunocashd(t)
+	jd, rpc := startJunocashd(t)
 
 	orchardAddr := unifiedAddress(t, jd, 0)
 	mineAndShieldOnce(t, jd, orchardAddr)
@@ -333,6 +356,38 @@ func TestIntegration_PlanSweep(t *testing.T) {
 	if err != nil || amt == 0 {
 		t.Fatalf("amount invalid")
 	}
+
+	excluded := make([]string, 0, len(plan.Notes))
+	for _, note := range plan.Notes {
+		excluded = append(excluded, note.NoteID)
+	}
+	_, err = txbuild.PlanSweep(ctx, txbuild.SweepConfig{
+		RPCURL:           jd.RPCURL,
+		RPCUser:          jd.RPCUser,
+		RPCPass:          jd.RPCPassword,
+		WalletID:         "test-wallet",
+		ToAddress:        orchardAddr,
+		ChangeAddress:    orchardAddr,
+		ExcludedNoteIDs:  excluded,
+		MinConfirmations: 1,
+		ExpiryOffset:     40,
+	})
+	assertInsufficientBalance(t, err)
+
+	scanSrv := startScanStub(t, ctx, rpc, "")
+	_, err = txbuild.PlanSweep(ctx, txbuild.SweepConfig{
+		RPCURL:           jd.RPCURL,
+		RPCUser:          jd.RPCUser,
+		RPCPass:          jd.RPCPassword,
+		ScanURL:          scanSrv.URL,
+		WalletID:         "test-wallet",
+		ToAddress:        orchardAddr,
+		ChangeAddress:    orchardAddr,
+		ExcludedNoteIDs:  excluded,
+		MinConfirmations: 1,
+		ExpiryOffset:     40,
+	})
+	assertInsufficientBalance(t, err)
 }
 
 func TestIntegration_PlanSendMany(t *testing.T) {
@@ -466,5 +521,51 @@ func TestIntegration_PlanConsolidate_WithScanURL(t *testing.T) {
 	}
 	if len(plan.Notes) < 2 {
 		t.Fatalf("notes=%d want >=2", len(plan.Notes))
+	}
+}
+
+func spendableNoteIDs(notes []spendableOrchardNote) []string {
+	ids := make([]string, 0, len(notes))
+	for _, note := range notes {
+		ids = append(ids, note.TxID+":"+strconv.FormatUint(uint64(note.OutIndex), 10))
+	}
+	return ids
+}
+
+func exercisePlanSendExclusions(t *testing.T, ctx context.Context, cfg txbuild.SendConfig, allNoteIDs []string) {
+	t.Helper()
+	if len(allNoteIDs) < 2 {
+		t.Fatalf("notes=%d want at least 2", len(allNoteIDs))
+	}
+
+	baseline, err := txbuild.PlanSend(ctx, cfg)
+	if err != nil {
+		t.Fatalf("baseline exclusion plan: %v", err)
+	}
+	if len(baseline.Notes) != 1 {
+		t.Fatalf("baseline selected notes=%d want 1", len(baseline.Notes))
+	}
+
+	cfg.ExcludedNoteIDs = []string{baseline.Notes[0].NoteID}
+	alternate, err := txbuild.PlanSend(ctx, cfg)
+	if err != nil {
+		t.Fatalf("alternate exclusion plan: %v", err)
+	}
+	for _, note := range alternate.Notes {
+		if note.NoteID == baseline.Notes[0].NoteID {
+			t.Fatalf("excluded note %q was selected", note.NoteID)
+		}
+	}
+
+	cfg.ExcludedNoteIDs = allNoteIDs
+	_, err = txbuild.PlanSend(ctx, cfg)
+	assertInsufficientBalance(t, err)
+}
+
+func assertInsufficientBalance(t *testing.T, err error) {
+	t.Helper()
+	var coded types.CodedError
+	if !errors.As(err, &coded) || coded.Code != types.ErrCodeInsufficientBalance {
+		t.Fatalf("expected insufficient_balance, got %v", err)
 	}
 }

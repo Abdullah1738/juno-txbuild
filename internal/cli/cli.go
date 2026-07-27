@@ -18,6 +18,17 @@ import (
 
 const jsonVersionV1 = "v1"
 
+type repeatedStringFlag []string
+
+func (f *repeatedStringFlag) String() string {
+	return strings.Join(*f, ",")
+}
+
+func (f *repeatedStringFlag) Set(value string) error {
+	*f = append(*f, value)
+	return nil
+}
+
 func Run(args []string) int {
 	return RunWithIO(args, os.Stdout, os.Stderr)
 }
@@ -55,11 +66,11 @@ func writeUsage(w io.Writer) {
 	fmt.Fprintln(w, "Online TxPlan v0 builder for offline signing.")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  juno-txbuild send --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> --amount-zat <zat> --change-address <j*1..> [--memo-hex <hex>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--min-note-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
-	fmt.Fprintln(w, "  juno-txbuild send-many --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j*1..> [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--min-note-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
-	fmt.Fprintln(w, "  juno-txbuild sweep --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> [--change-address <j*1..>] [--memo-hex <hex>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-note-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
-	fmt.Fprintln(w, "  juno-txbuild consolidate --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> [--change-address <j*1..>] [--memo-hex <hex>] [--max-spends <2..200>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-note-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
-	fmt.Fprintln(w, "  juno-txbuild rebalance --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j*1..> [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--min-note-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild send --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> --amount-zat <zat> --change-address <j*1..> [--exclude-note-id <txid:index>]... [--memo-hex <hex>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--min-note-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild send-many --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j*1..> [--exclude-note-id <txid:index>]... [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--min-note-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild sweep --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> [--change-address <j*1..>] [--exclude-note-id <txid:index>]... [--memo-hex <hex>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-note-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild consolidate --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --to <j*1..> [--change-address <j*1..>] [--exclude-note-id <txid:index>]... [--memo-hex <hex>] [--max-spends <2..200>] [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-note-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
+	fmt.Fprintln(w, "  juno-txbuild rebalance --rpc-url <url> --rpc-user <user> --rpc-pass <pass> [--scan-url <url>] [--scan-bearer-token <token>] --wallet-id <id> --coin-type <n> --account <n> --outputs-file <path|-> --change-address <j*1..> [--exclude-note-id <txid:index>]... [--fee-multiplier <n>] [--fee-add-zat <zat>] [--min-change-zat <zat>] [--min-note-zat <zat>] [--minconf <n>] [--expiry-offset <n>] [--out <path>] [--json]")
 	fmt.Fprintln(w, "")
 	fmt.Fprintf(w, "Defaults: --minconf %d, --fee-multiplier %d; signer limit: %d inputs and %d total outputs including change.\n", txbuild.DefaultMinConfirmations, txbuild.DefaultFeeMultiplier, txbuild.MaxOrchardSpendNotes, txbuild.MaxOrchardOutputs)
 	fmt.Fprintln(w, "")
@@ -80,6 +91,7 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 	var walletID string
 	var coinType uint64
 	var account uint64
+	var excludedNoteIDs repeatedStringFlag
 	var to string
 	var amountZat string
 	var memoHex string
@@ -103,6 +115,7 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&walletID, "wallet-id", "", "wallet id")
 	fs.Uint64Var(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
 	fs.Uint64Var(&account, "account", 0, "unified account id")
+	fs.Var(&excludedNoteIDs, "exclude-note-id", "canonical note ID to exclude from selection (repeatable)")
 	fs.StringVar(&to, "to", "", "destination unified address (j*1...)")
 	fs.StringVar(&amountZat, "amount-zat", "", "amount to send in zatoshis")
 	fs.StringVar(&memoHex, "memo-hex", "", "optional memo bytes (hex, <=512 bytes)")
@@ -154,6 +167,8 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 		CoinType: coinTypeValue,
 		Account:  accountValue,
 
+		ExcludedNoteIDs: excludedNoteIDs,
+
 		ToAddress:     to,
 		AmountZat:     amountZat,
 		MemoHex:       memoHex,
@@ -196,6 +211,7 @@ func runSweep(args []string, stdout, stderr io.Writer) int {
 	var walletID string
 	var coinType uint64
 	var account uint64
+	var excludedNoteIDs repeatedStringFlag
 	var to string
 	var memoHex string
 	var changeAddr string
@@ -217,6 +233,7 @@ func runSweep(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&walletID, "wallet-id", "", "wallet id")
 	fs.Uint64Var(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
 	fs.Uint64Var(&account, "account", 0, "unified account id")
+	fs.Var(&excludedNoteIDs, "exclude-note-id", "canonical note ID to exclude from selection (repeatable)")
 	fs.StringVar(&to, "to", "", "destination unified address (j*1...)")
 	fs.StringVar(&memoHex, "memo-hex", "", "optional memo bytes (hex, <=512 bytes)")
 	fs.StringVar(&changeAddr, "change-address", "", "change unified address (j*1...) (defaults to --to)")
@@ -266,6 +283,8 @@ func runSweep(args []string, stdout, stderr io.Writer) int {
 		CoinType: coinTypeValue,
 		Account:  accountValue,
 
+		ExcludedNoteIDs: excludedNoteIDs,
+
 		ToAddress:     to,
 		MemoHex:       memoHex,
 		ChangeAddress: changeAddr,
@@ -306,6 +325,7 @@ func runConsolidate(args []string, stdout, stderr io.Writer) int {
 	var walletID string
 	var coinType uint64
 	var account uint64
+	var excludedNoteIDs repeatedStringFlag
 	var to string
 	var memoHex string
 	var changeAddr string
@@ -328,6 +348,7 @@ func runConsolidate(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&walletID, "wallet-id", "", "wallet id")
 	fs.Uint64Var(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
 	fs.Uint64Var(&account, "account", 0, "unified account id")
+	fs.Var(&excludedNoteIDs, "exclude-note-id", "canonical note ID to exclude from selection (repeatable)")
 	fs.StringVar(&to, "to", "", "destination unified address (j*1...)")
 	fs.StringVar(&memoHex, "memo-hex", "", "optional memo bytes (hex, <=512 bytes)")
 	fs.StringVar(&changeAddr, "change-address", "", "change unified address (j*1...) (defaults to --to)")
@@ -381,6 +402,8 @@ func runConsolidate(args []string, stdout, stderr io.Writer) int {
 		CoinType: coinTypeValue,
 		Account:  accountValue,
 
+		ExcludedNoteIDs: excludedNoteIDs,
+
 		ToAddress:     to,
 		MemoHex:       memoHex,
 		ChangeAddress: changeAddr,
@@ -423,6 +446,7 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 	var walletID string
 	var coinType uint64
 	var account uint64
+	var excludedNoteIDs repeatedStringFlag
 	var outputsFile string
 	var changeAddr string
 	var minconf int64
@@ -444,6 +468,7 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 	fs.StringVar(&walletID, "wallet-id", "", "wallet id")
 	fs.Uint64Var(&coinType, "coin-type", 0, "ZIP-32 coin type (0 = auto)")
 	fs.Uint64Var(&account, "account", 0, "unified account id")
+	fs.Var(&excludedNoteIDs, "exclude-note-id", "canonical note ID to exclude from selection (repeatable)")
 	fs.StringVar(&outputsFile, "outputs-file", "", "path to JSON array of TxOutputs (or - for stdin)")
 	fs.StringVar(&changeAddr, "change-address", "", "change unified address (j*1...)")
 	fs.Uint64Var(&feeMultiplier, "fee-multiplier", txbuild.DefaultFeeMultiplier, "multiplies the ZIP-317 base fee (>=1; default 20)")
@@ -508,6 +533,8 @@ func runPlanOutputs(args []string, kind types.TxPlanKind, stdout, stderr io.Writ
 		WalletID: walletID,
 		CoinType: coinTypeValue,
 		Account:  accountValue,
+
+		ExcludedNoteIDs: excludedNoteIDs,
 
 		Kind:          kind,
 		Outputs:       outs,
