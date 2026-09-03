@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	defaultJunocashVersion = "0.9.12"
+	defaultJunocashVersion = "0.9.13"
 	defaultRPCUser         = "rpcuser"
 	defaultRPCPassword     = "rpcpass"
 )
@@ -64,7 +64,7 @@ func StartJunocashd(ctx context.Context) (*Junocashd, error) {
 			"-rpcuser=" + rpcUser,
 			"-rpcpassword=" + rpcPass,
 		},
-		WaitingFor: wait.ForListeningPort(nat.Port("8232/tcp")).WithStartupTimeout(60 * time.Second),
+		WaitingFor: wait.ForListeningPort(nat.Port("8232/tcp")).WithStartupTimeout(3 * time.Minute),
 	}
 
 	if os.Getenv("JUNO_TEST_LOG") != "" {

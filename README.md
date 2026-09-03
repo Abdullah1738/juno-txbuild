@@ -43,7 +43,7 @@ The base fee calculation is:
 - `base_fee_zat = 5000 * max(2, max(spends, outputs))`
 - where `outputs` includes the change output when `change > 0`
 
-The shipped default is `--fee-multiplier 20`, matching the pinned `junocashd` 0.9.12 policy. Therefore the default fee is `base_fee_zat * 20` before `--fee-add-zat`.
+The shipped default is `--fee-multiplier 20`, matching the pinned `junocashd` 0.9.13 policy. Therefore the default fee is `base_fee_zat * 20` before `--fee-add-zat`.
 
 To pay a higher fee (e.g. during congestion, or to reduce time-to-mine), use:
 
