@@ -46,6 +46,10 @@ func TestIntegration_PlanSend(t *testing.T) {
 	if err := validatePlanBasics(plan); err != nil {
 		t.Fatalf("invalid plan: %v", err)
 	}
+	// Default fee policy: 2 conventional ZIP-317 actions x 5000 zat x multiplier 20.
+	if plan.FeeZat != "200000" {
+		t.Fatalf("fee_zat=%q want %q", plan.FeeZat, "200000")
+	}
 
 	shieldCoinbase(t, jd, changeAddr, 2)
 	notes := waitSpendableOrchardNoteCount(t, jd, 0, 2)
